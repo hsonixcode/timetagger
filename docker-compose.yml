@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  timetagger:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - timetagger_data:/home/timetagger/.timetagger
+    environment:
+      - TIMETAGGER_CREDENTIALS=${TIMETAGGER_CREDENTIALS:-admin:$2a$08$0CD1NFiIbancwWsu3se1v.RNR/b7YeZd71yg3cZ/3whGlyU6Iny5i}
+    restart: unless-stopped
+
+volumes:
+  timetagger_data: 
