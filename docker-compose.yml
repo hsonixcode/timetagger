@@ -8,6 +8,9 @@ services:
     volumes:
       - timetagger_data:/home/timetagger/.timetagger
     environment:
+      - TIMETAGGER_BIND=0.0.0.0:8000
+      - TIMETAGGER_DATADIR=/home/timetagger/.timetagger
+      - TIMETAGGER_LOG_LEVEL=info
       - TIMETAGGER_CREDENTIALS=${TIMETAGGER_CREDENTIALS:-admin:$2a$08$0CD1NFiIbancwWsu3se1v.RNR/b7YeZd71yg3cZ/3whGlyU6Iny5i}
     restart: unless-stopped
 

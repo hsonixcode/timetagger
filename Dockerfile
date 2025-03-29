@@ -14,8 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create a non-root user
-RUN useradd -m -u 1000 timetagger
+# Create a non-root user and set up data directory
+RUN useradd -m -u 1000 timetagger && \
+    mkdir -p /home/timetagger/.timetagger/users && \
+    chown -R timetagger:timetagger /home/timetagger/.timetagger
+
 USER timetagger
 
 # Expose the port TimeTagger runs on
