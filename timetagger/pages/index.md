@@ -28,15 +28,3 @@ main a.ctabutton:hover {
     <a href='app/' class='ctabutton'>
         <i class='fas'>\uf04b</i>&nbsp;&nbsp;Launch App</a>
 </div>
-
-----
-
-This is the stub index page for TimeTagger,
-an open source time-tracker that feels lightweight and has powerful reporting.
-
-Links:
-
-* [Main website](https://timetagger.app)
-* [Source code on Github](https://github.com/almarklein/timetagger)
-* [Docs on RTD](https://timetagger.readthedocs.io)
-* [CLI tool](https://github.com/almarklein/timetagger_cli)
