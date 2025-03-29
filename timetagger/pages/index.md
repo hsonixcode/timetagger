@@ -25,10 +25,8 @@ main a.ctabutton:hover {
 </style>
 
 <div>
-    <a href='app/demo' class='ctabutton'>
-        <i class='fas'>\uf04b</i>&nbsp;&nbsp;Demo</a>
     <a href='app/' class='ctabutton'>
-        <i class='fas'>\uf04b</i>&nbsp;&nbsp;App</a>
+        <i class='fas'>\uf04b</i>&nbsp;&nbsp;Launch App</a>
 </div>
 
 ----

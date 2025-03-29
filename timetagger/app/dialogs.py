@@ -199,23 +199,19 @@ def csvsplit(s, sep, i=0):
                 if (i < s.length - 1 && s.charCodeAt(i + 1) == 34) {
                     i += 1; // Skip over second quote
                 } else {
-                    mode = 1;
+                    mode = 0;
                 }
             }
         }
     }
-    i += 1;
-    parts.push(s.slice(lastsplit, i).trim());
-    // Remove escape-quotes
-    for (var j=0; j<parts.length; j++) {
-        var val = parts[j];
-        if (val.length > 0 && val[0] == '"' && val[val.length-1] == '"') {
-            parts[j] = val.slice(1, val.length-1).replace('""', '"');
-        }
+    if (mode == 1) {
+        parts.push(s.slice(lastsplit, i + 1).trim());
+    } else if (mode == 2) {
+        parts.push(s.slice(lastsplit, i).trim());
     }
     """
     )
-    return parts, i
+    return parts
 
 
 class BaseDialog:
@@ -309,58 +305,8 @@ class BaseDialog:
             self.close()
 
     def _prevent_blur(self):
+        """Prevent the dialog from losing focus."""
         self.allow_blur = False
-
-
-class DemoInfoDialog(BaseDialog):
-    """Dialog to show as the demo starts up."""
-
-    EXIT_ON_CLICK_OUTSIDE = True
-
-    def open(self):
-        """Show/open the dialog ."""
-        html = """
-            <h1>Demo
-                <button type='button'><i class='fas'>\uf00d</i></button>
-            </h1>
-            <p>
-            This demo shows 5 years of randomly generated time tracking data.
-            Have a look around!
-            </p><p>
-            <i>Hit Escape or click anywhere outside of this dialog to close it.</i>
-            </p>
-        """
-        self.maindiv.innerHTML = html
-
-        close_but = self.maindiv.children[0].children[-1]
-        close_but.onclick = self.close
-        super().open(None)
-
-
-class SandboxInfoDialog(BaseDialog):
-    """Dialog to show as the sandbox starts up."""
-
-    EXIT_ON_CLICK_OUTSIDE = True
-
-    def open(self):
-        """Show/open the dialog ."""
-        html = """
-            <h1>Sandbox
-                <button type='button'><i class='fas'>\uf00d</i></button>
-            </h1>
-            <p>
-            The TimeTagger sandbox starts without any records. You can play around
-            or try importing records. The data is not synced to the server and
-            will be lost as soon as you leave this page.
-            </p><p>
-            <i>Hit Escape or click anywhere outside of this dialog to close it.</i>
-            </p>
-        """
-        self.maindiv.innerHTML = html
-
-        close_but = self.maindiv.children[0].children[-1]
-        close_but.onclick = self.close
-        super().open(None)
 
 
 class NotificationDialog(BaseDialog):
@@ -369,18 +315,15 @@ class NotificationDialog(BaseDialog):
     EXIT_ON_CLICK_OUTSIDE = True
 
     def open(self, message, title="Notification"):
-        """Show/open the dialog ."""
-        message
-        html = f"""
-            <h1>{title}
-                <button type='button'><i class='fas'>\uf00d</i></button>
-            </h1>
-            <p>{message}</p>
+        """Open the dialog with the given message."""
+        self.maindiv.innerHTML = f"""
+            <div class='dialog-content'>
+                <h2>{title}</h2>
+                <p>{message}</p>
+                <button onclick='this.parentElement.parentElement.close()'>OK</button>
+            </div>
         """
-        self.maindiv.innerHTML = html
-        close_but = self.maindiv.children[0].children[-1]
-        close_but.onclick = self.close
-        super().open(None)
+        super().open()
 
 
 class MenuDialog(BaseDialog):
@@ -478,7 +421,7 @@ class MenuDialog(BaseDialog):
 
     def _show_settings(self):
         self.close()
-        self._canvas.settings_dialog.open()
+        self.canvas.settings_dialog.open()
 
     def _do_install(self):
         # There are quite a few components to make installation as a
@@ -493,19 +436,19 @@ class MenuDialog(BaseDialog):
 
     def _open_report(self):
         self.close()
-        self._canvas.report_dialog.open()
+        self.canvas.report_dialog.open()
 
     def _search(self):
         self.close()
-        self._canvas.search_dialog.open()
+        self.canvas.search_dialog.open()
 
     def _export(self):
         self.close()
-        self._canvas.export_dialog.open()
+        self.canvas.export_dialog.open()
 
     def _import(self):
         self.close()
-        self._canvas.import_dialog.open()
+        self.canvas.import_dialog.open()
 
 
 class TimeSelectionDialog(BaseDialog):
@@ -518,7 +461,7 @@ class TimeSelectionDialog(BaseDialog):
         """Show/open the dialog ."""
 
         # Transform time int to dates.
-        t1, t2 = self._canvas.range.get_target_range()
+        t1, t2 = self.canvas.range.get_target_range()
         t1_date = dt.time2localstr(dt.floor(t1, "1D")).split(" ")[0]
         t2_date = dt.time2localstr(dt.round(t2, "1D")).split(" ")[0]
         if t1_date != t2_date:
@@ -592,12 +535,12 @@ class TimeSelectionDialog(BaseDialog):
 
     def _apply_quicknav(self, text):
         scalestep = +1 if "out" in text.lower() else -1
-        t1, t2 = self._canvas.range.get_snap_range(scalestep)
+        t1, t2 = self.canvas.range.get_snap_range(scalestep)
 
         self._t1_input.value = dt.time2localstr(t1).split(" ")[0]
         self._t2_input.value = dt.time2localstr(t2).split(" ")[0]
 
-        self._canvas.range.animate_range(t1, t2)
+        self.canvas.range.animate_range(t1, t2)
 
     def _apply_preset(self, text):
         text = text.lower()
@@ -1641,7 +1584,7 @@ class RecordDialog(BaseDialog):
         self._recent_but.onclick = self.show_recent_descriptions
         self._tags_but.onclick = self.show_recent_tags
         self._preset_but.onclick = self.show_presets
-        self._preset_edit.onclick = lambda: self._canvas.tag_preset_dialog.open()
+        self._preset_edit.onclick = lambda: self.canvas.tag_preset_dialog.open()
         self._delete_but1.onclick = self._delete1
         self._delete_but2.onclick = self._delete2
         self.maindiv.addEventListener("click", self._autocompleter.clear)
@@ -1865,9 +1808,9 @@ class RecordDialog(BaseDialog):
         # Start pomo?
         if window.simplesettings.get("pomodoro_enabled"):
             if self._lmode == "start":
-                self._canvas.pomodoro_dialog.start_work()
+                self.canvas.pomodoro_dialog.start_work()
             elif self._lmode == "stop":
-                self._canvas.pomodoro_dialog.stop()
+                self.canvas.pomodoro_dialog.stop()
 
     def resume_record(self):
         """Start a new record with the same description."""
@@ -1886,7 +1829,7 @@ class RecordDialog(BaseDialog):
         # Close the dialog - don't apply local changes
         self.close()
         # Move to today, if needed
-        t1, t2 = self._canvas.range.get_target_range()
+        t1, t2 = self.canvas.range.get_target_range()
         if not (t1 < now < t2):
             t1, t2 = self._canvas.range.get_today_range()
             self._canvas.range.animate_range(t1, t2)
