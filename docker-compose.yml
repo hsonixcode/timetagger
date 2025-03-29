@@ -1,19 +1,31 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=timetagger
+      - POSTGRES_PASSWORD=timetagger
+      - POSTGRES_DB=timetagger
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
   timetagger:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - timetagger_data:/home/timetagger/.timetagger
       - ./timetagger:/app/timetagger
     environment:
       - TIMETAGGER_BIND=0.0.0.0:8000
-      - TIMETAGGER_DATADIR=/home/timetagger/.timetagger
       - TIMETAGGER_LOG_LEVEL=info
-      - TIMETAGGER_CREDENTIALS=${TIMETAGGER_CREDENTIALS:-admin:$2a$08$0CD1NFiIbancwWsu3se1v.RNR/b7YeZd71yg3cZ/3whGlyU6Iny5i}
+      - TIMETAGGER_CREDENTIALS=admin:$2a$08$0CD1NFiIbancwWsu3se1v.RNR/b7YeZd71yg3cZ/3whGlyU6Iny5i
+      - TIMETAGGER_DB_URL=postgresql://timetagger:timetagger@postgres:5432/timetagger
+    depends_on:
+      - postgres
     restart: unless-stopped
 
 volumes:
-  timetagger_data: 
+  postgres_data: 
