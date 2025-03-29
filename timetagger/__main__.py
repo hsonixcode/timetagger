@@ -77,29 +77,20 @@ web_asset_handler = asgineer.utils.make_asset_handler(web_assets, max_age=0)
 async def main_handler(request):
     """
     The main handler where we delegate to the API or asset handler.
-
-    We serve at /timetagger for a few reasons, one being that the service
-    worker won't interfere with other stuff you might serve on localhost.
     """
 
     if request.path == "/":
-        return 307, {"Location": "/timetagger/"}, b""  # Redirect
+        return await web_asset_handler(request, "")
 
-    elif request.path.startswith("/timetagger/"):
-        if request.path == "/timetagger/status":
-            return 200, {}, "ok"
-        elif request.path.startswith("/timetagger/api/v2/"):
-            path = request.path[19:].strip("/")
-            return await api_handler(request, path)
-        elif request.path.startswith("/timetagger/app/"):
-            path = request.path[16:].strip("/")
-            return await app_asset_handler(request, path)
-        else:
-            path = request.path[12:].strip("/")
-            return await web_asset_handler(request, path)
-
+    elif request.path.startswith("/api/v2/"):
+        path = request.path[8:].strip("/")
+        return await api_handler(request, path)
+    elif request.path.startswith("/app/"):
+        path = request.path[5:].strip("/")
+        return await app_asset_handler(request, path)
     else:
-        return 404, {}, "only serving at /timetagger/"
+        path = request.path[1:].strip("/")
+        return await web_asset_handler(request, path)
 
 
 async def api_handler(request, path):

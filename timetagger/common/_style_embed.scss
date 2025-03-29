@@ -78,46 +78,84 @@ body {
     padding: 0;
     box-sizing: border-box;
     overflow-x: hidden;
+    font-family: $normalfont;
+    background: $bg2;
 }
 
-main, header, footer {
-    position: static;
-    box-sizing: border-box;
+.main-nav {
+    background: $prim1_clr;
+    padding: 1rem 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    position: fixed;
     width: 100%;
-    border: 0;
-    margin: 0;
-}
-main .content, header .content, footer .content {
-    position: static;
-    box-sizing: border-box;
-    width: 100%;
-    border: 0;
-    margin: 0;
+    top: 0;
+    z-index: 1000;
 }
 
-main .content {
-    position: absolute;
-    top: 0px; bottom: 0; left: 0; right: 0;
-    padding: 1em; margin: 0;  /* override centering for static position */
+.nav-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
-@media screen and (min-width: 1000px) {
-    main .content { /* width-auto */
-        left: calc(25% - 250px); right: calc(25% - 250px); width: calc(500px + 50%);
-    }
-    main .content.width-1000 {
-        left: calc(50% - 500px); right: calc(50% - 500px); width: 1000px;
-    }
-    main .content.width-full,
-    main .content.width-1500 {
-        left: 0; right: 0; width: 100vw;
-    }
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
-@media screen and (min-width: 1500px) {
-    main .content.width-1500 {
-        left: calc(50% - 750px); right: calc(50% - 750px); width: 1500px;
+
+.nav-logo {
+    width: 32px;
+    height: 32px;
+}
+
+.nav-title {
+    color: white;
+    font-size: 1.5rem;
+    font-weight: bold;
+}
+
+.nav-links {
+    display: flex;
+    gap: 1.5rem;
+}
+
+.nav-link {
+    color: white;
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.1);
     }
 }
 
+main {
+    margin-top: 80px; // Account for fixed nav
+    min-height: calc(100vh - 80px - 60px); // Subtract nav and footer height
+    padding: 2rem;
+}
+
+.content {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.main-footer {
+    background: $prim1_clr;
+    color: white;
+    padding: 1rem 0;
+    text-align: center;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
 /**************** Base styling ****************/
 

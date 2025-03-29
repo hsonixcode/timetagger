@@ -14,15 +14,32 @@
 </head>
 
 <body>
+<nav class="main-nav">
+  <div class="nav-content">
+    <div class="nav-brand">
+      <img src="timetagger192_sf.png" alt="TimeTagger" class="nav-logo">
+      <span class="nav-title">TimeTagger</span>
+    </div>
+    <div class="nav-links">
+      <a href='./' class="nav-link">Home</a>
+      <a href='./account' class="nav-link">Account</a>
+      <a href='./app/' class="nav-link">App</a>
+      <a href='./app/demo' class="nav-link">Demo</a>
+      <a href='./app/sandbox' class="nav-link">Sandbox</a>
+    </div>
+  </div>
+</nav>
 
 <main>
-    <div class='content' id='main-content'>
-      <div class='menubar'>
-          <a href='./'>Home</a> | <a href='./account'>Account</a> | <a href='./app/'>App</a> | <a href='./app/demo'>Demo</a> | <a href='./app/sandbox'>Sandbox</a>
-      </div>
-        {{ main }}
-    </div>
+  <div class='content' id='main-content'>
+    {{ main }}
+  </div>
 </main>
 
+<footer class="main-footer">
+  <div class="footer-content">
+    <p>TimeTagger - Tag your time, get the insight</p>
+  </div>
+</footer>
 </body>
 </html>
