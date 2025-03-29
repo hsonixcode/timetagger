@@ -1,110 +1,133 @@
-% TimeTagger - Tag your time, get the insight
-% An open source time tracker that feels lightweight and has powerful reporting.
+% TimeTagger - Project Overview
+% Track and manage your time across projects
 
-<div class="hero-section">
-  <div class="hero-content">
-    <img src='timetagger_wd.svg' width='350px' class="hero-logo" />
-    <h1 class='hero-title'><span class="highlight">Tag</span> your time,<br>get the <span class="highlight">insight</span>.</h1>
-    <p class="hero-subtitle">An open source time tracker that feels lightweight and has powerful reporting.</p>
-    
-    <div class="cta-buttons">
-      <a href='app/demo' class='cta-button'>
-        <i class='fas'>\uf04b</i>&nbsp;&nbsp;Try Demo
-      </a>
-      <a href='app/' class='cta-button primary'>
-        <i class='fas'>\uf04b</i>&nbsp;&nbsp;Start Tracking
+<div class="dashboard-header">
+  <div class="header-content">
+    <h1>Project Overview</h1>
+    <div class="header-actions">
+      <a href='app/' class='action-button'>
+        <i class='fas'>\uf067</i>&nbsp;&nbsp;New Project
       </a>
     </div>
   </div>
 </div>
 
-<div class="features-section">
-  <div class="features-grid">
-    <div class="feature-card">
-      <i class="fas">\uf017</i>
-      <h3>Simple & Lightweight</h3>
-      <p>Easy to use interface with powerful features under the hood</p>
+<div class="dashboard-grid">
+  <div class="dashboard-card">
+    <div class="card-header">
+      <h2>Active Projects</h2>
+      <span class="count">3</span>
     </div>
-    <div class="feature-card">
-      <i class="fas">\uf03a</i>
-      <h3>Powerful Reporting</h3>
-      <p>Get insights into how you spend your time</p>
-    </div>
-    <div class="feature-card">
-      <i class="fas">\uf0c2</i>
-      <h3>Cloud Sync</h3>
-      <p>Access your data from anywhere</p>
+    <div class="project-list">
+      <div class="project-item">
+        <div class="project-info">
+          <h3>Website Redesign</h3>
+          <p>UI/UX improvements and responsive design</p>
+        </div>
+        <div class="project-stats">
+          <span class="time">12h 30m</span>
+          <span class="status active">In Progress</span>
+        </div>
+      </div>
+      <div class="project-item">
+        <div class="project-info">
+          <h3>Mobile App Development</h3>
+          <p>iOS and Android app development</p>
+        </div>
+        <div class="project-stats">
+          <span class="time">8h 15m</span>
+          <span class="status active">In Progress</span>
+        </div>
+      </div>
+      <div class="project-item">
+        <div class="project-info">
+          <h3>Backend API</h3>
+          <p>RESTful API development and testing</p>
+        </div>
+        <div class="project-stats">
+          <span class="time">5h 45m</span>
+          <span class="status active">In Progress</span>
+        </div>
+      </div>
     </div>
   </div>
-</div>
 
-<div class="links-section">
-  <h2>Resources</h2>
-  <div class="links-grid">
-    <a href="https://timetagger.app" class="link-card">
-      <i class="fas">\uf015</i>
-      <span>Main Website</span>
-    </a>
-    <a href="https://github.com/almarklein/timetagger" class="link-card">
-      <i class="fas">\uf09b</i>
-      <span>Source Code</span>
-    </a>
-    <a href="https://timetagger.readthedocs.io" class="link-card">
-      <i class="fas">\uf02d</i>
-      <span>Documentation</span>
-    </a>
-    <a href="https://github.com/almarklein/timetagger_cli" class="link-card">
-      <i class="fas">\uf120</i>
-      <span>CLI Tool</span>
-    </a>
+  <div class="dashboard-card">
+    <div class="card-header">
+      <h2>Recent Activity</h2>
+    </div>
+    <div class="activity-list">
+      <div class="activity-item">
+        <i class="fas">\uf017</i>
+        <div class="activity-info">
+          <p>Started tracking "Website Redesign"</p>
+          <span class="time">2 hours ago</span>
+        </div>
+      </div>
+      <div class="activity-item">
+        <i class="fas">\uf00d</i>
+        <div class="activity-info">
+          <p>Stopped tracking "Mobile App Development"</p>
+          <span class="time">4 hours ago</span>
+        </div>
+      </div>
+      <div class="activity-item">
+        <i class="fas">\uf0c2</i>
+        <div class="activity-info">
+          <p>Synced data across devices</p>
+          <span class="time">5 hours ago</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dashboard-card">
+    <div class="card-header">
+      <h2>Weekly Summary</h2>
+    </div>
+    <div class="summary-content">
+      <div class="summary-item">
+        <span class="label">Total Hours</span>
+        <span class="value">26h 30m</span>
+      </div>
+      <div class="summary-item">
+        <span class="label">Active Projects</span>
+        <span class="value">3</span>
+      </div>
+      <div class="summary-item">
+        <span class="label">Tasks Completed</span>
+        <span class="value">12</span>
+      </div>
+    </div>
   </div>
 </div>
 
 <style>
-.hero-section {
-  text-align: center;
-  padding: 4rem 2rem;
+.dashboard-header {
   background: linear-gradient(135deg, $prim1_clr 0%, darken($prim1_clr, 10%) 100%);
   color: white;
+  padding: 2rem;
   border-radius: 8px;
-  margin-bottom: 3rem;
+  margin-bottom: 2rem;
 }
 
-.hero-content {
-  max-width: 800px;
+.header-content {
+  max-width: 1200px;
   margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.hero-logo {
-  margin-bottom: 2rem;
-}
-
-.hero-title {
-  font-size: 3rem;
-  line-height: 1.2;
-  margin-bottom: 1rem;
-}
-
-.highlight {
-  border-bottom: 3px solid $acc_clr;
-}
-
-.hero-subtitle {
-  font-size: 1.2rem;
-  opacity: 0.9;
-  margin-bottom: 2rem;
-}
-
-.cta-buttons {
+.header-actions {
   display: flex;
   gap: 1rem;
-  justify-content: center;
 }
 
-.cta-button {
+.action-button {
   display: inline-flex;
   align-items: center;
-  padding: 1rem 2rem;
+  padding: 0.75rem 1.5rem;
   border-radius: 4px;
   text-decoration: none;
   font-weight: bold;
@@ -116,100 +139,167 @@
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
   }
-  
-  &.primary {
-    background: $acc_clr;
-    color: white;
-  }
 }
 
-.features-section {
-  padding: 4rem 2rem;
-}
-
-.features-grid {
+.dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 2rem;
   max-width: 1200px;
   margin: 0 auto;
 }
 
-.feature-card {
-  text-align: center;
-  padding: 2rem;
+.dashboard-card {
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  
-  i {
-    font-size: 2.5rem;
-    color: $acc_clr;
-    margin-bottom: 1rem;
-  }
-  
-  h3 {
-    margin-bottom: 1rem;
-    color: $prim1_clr;
-  }
-  
-  p {
-    color: $prim3_clr;
-    line-height: 1.6;
-  }
+  padding: 1.5rem;
 }
 
-.links-section {
-  padding: 4rem 2rem;
-  background: $bg1;
-  border-radius: 8px;
-  
-  h2 {
-    text-align: center;
-    margin-bottom: 2rem;
-    color: $prim1_clr;
-  }
-}
-
-.links-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.link-card {
+.card-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid $sec1_clr;
+}
+
+.count {
+  background: $acc_clr;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
+}
+
+.project-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   padding: 1rem;
-  background: white;
+  background: $bg2;
   border-radius: 4px;
-  text-decoration: none;
-  color: $prim1_clr;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s;
   
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transform: translateX(4px);
   }
+}
+
+.project-info h3 {
+  margin: 0;
+  color: $prim1_clr;
+}
+
+.project-info p {
+  margin: 0.25rem 0 0;
+  color: $prim3_clr;
+  font-size: 0.9rem;
+}
+
+.project-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.time {
+  color: $prim1_clr;
+  font-weight: bold;
+}
+
+.status {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  
+  &.active {
+    background: #e6f4ea;
+    color: #1e7e34;
+  }
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem;
+  background: $bg2;
+  border-radius: 4px;
   
   i {
     color: $acc_clr;
+    font-size: 1.2rem;
+  }
+}
+
+.activity-info {
+  flex: 1;
+  
+  p {
+    margin: 0;
+    color: $prim1_clr;
+  }
+  
+  .time {
+    font-size: 0.8rem;
+    color: $prim3_clr;
+  }
+}
+
+.summary-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1rem;
+}
+
+.summary-item {
+  text-align: center;
+  padding: 1rem;
+  background: $bg2;
+  border-radius: 4px;
+  
+  .label {
+    display: block;
+    color: $prim3_clr;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+  }
+  
+  .value {
+    display: block;
+    color: $prim1_clr;
+    font-size: 1.5rem;
+    font-weight: bold;
   }
 }
 
 @media (max-width: 768px) {
-  .hero-title {
-    font-size: 2rem;
+  .header-content {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
   }
   
-  .cta-buttons {
+  .header-actions {
     flex-direction: column;
   }
   
-  .features-grid {
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 }
