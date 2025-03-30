@@ -1,6 +1,25 @@
 % Time Tracker - Login
 % The Time Tracker application.
 
+<div id="login-form" style="padding: 2em; border: 1px solid #ccc; border-radius: 5px; max-width: 400px; margin: 2em auto;">
+    <h2>Login</h2>
+    <p id="login-status" style="color: red;"></p>
+
+    <div id="credential-login" style="margin-bottom: 1em;">
+        <label for="username">Username:</label><br>
+        <input type="text" id="username" name="username" style="width: 95%; padding: 8px; margin-bottom: 10px;"><br>
+        <label for="password">Password:</label><br>
+        <input type="password" id="password" name="password" style="width: 95%; padding: 8px; margin-bottom: 10px;"><br>
+        <button id="login-button" onclick="handleCredentialLogin()" style="padding: 10px 15px;">Login</button>
+    </div>
+
+    <div id="azure-login" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em;">
+        <p>Or login with:</p>
+        <button id="azure-login-button" onclick="handleAzureLogin()" style="padding: 10px 15px;">Azure Active Directory</button> 
+        <!-- Note: The handleAzureLogin function needs to be defined globally or attached correctly -->
+    </div>
+</div>
+
 <script>
 // Set Azure AD configuration variables
 window.AZURE_CLIENT_ID = '{{ timetagger_azure_client_id }}';
@@ -631,20 +650,128 @@ function showLogoutMessage() {
 
 // Call this when the page loads
 window.addEventListener('load', showLogoutMessage);
-</script>
 
-<div class="login-container">
-    <h1>Time Tracker Login</h1>
-    <div id="status">Loading...</div>
-    <div id="token-status-container" class="token-status-container">
-        <div id="azure-token-status" class="token-status not-authenticated">✗ Azure AD Not authenticated</div>
-        <div id="tt-token-status" class="token-status not-authenticated">✗ TimeTagger Not authenticated</div>
-    </div>
-    <div class="login-buttons">
-        <button onclick="handleAzureLogin()" class="azure-login-button">Login with Azure AD</button>
-    </div>
-    <div id="error-message" class="error-message"></div>
-</div>
+// Ensure tools.js is loaded or provide a placeholder if needed
+window.tools = window.tools || {
+    set_auth_info_from_token: function(token) {
+        localStorage.setItem('timetagger_auth_token', token);
+        console.log("Auth token stored in localStorage (placeholder).");
+    }
+};
+
+// Helper function to update status messages
+function updateStatus(message, type = 'info') {
+    const statusElement = document.getElementById('login-status');
+    if (statusElement) {
+        statusElement.textContent = message;
+        statusElement.style.color = type === 'error' ? 'red' : 'green';
+    }
+    console.log(`Status (${type}): ${message}`);
+}
+
+// --- Credential Login Handler ---
+async function handleCredentialLogin() {
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value.trim(); // NOTE: Sending password in clear text, handled by bcrypt on server
+
+    if (!username || !password) {
+        updateStatus('Username and password are required.', 'error');
+        return;
+    }
+
+    updateStatus('Logging in...');
+
+    try {
+        // Base64 encode the auth info
+        const authInfo = {
+            method: 'usernamepassword',
+            username: username,
+            password: password
+        };
+        const authInfoStr = JSON.stringify(authInfo);
+        const authInfoBase64 = btoa(authInfoStr); // Standard Base64 encoding
+
+        console.log('Sending username/password authentication request');
+
+        // Send authentication request
+        const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
+            method: 'POST',
+            body: authInfoBase64
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text() || `HTTP error ${response.status}`;
+            console.error(`Credential login failed: ${errorText}`);
+            updateStatus(`Login failed: ${errorText}`, 'error');
+            return;
+        }
+
+        const data = await response.json();
+
+        if (data && data.token) {
+            console.log('Credential login successful, token received');
+            window.tools.set_auth_info_from_token(data.token); // Store the token
+            updateStatus('Login successful! Redirecting...', 'success');
+
+            // Redirect to the main app page
+            window.location.href = '/timetagger/app/';
+
+        } else {
+            console.error('Credential login failed: No token received.');
+            updateStatus('Login failed: Server did not return a token.', 'error');
+        }
+
+    } catch (error) {
+        console.error('Error during credential login:', error);
+        updateStatus('Login failed: An unexpected error occurred.', 'error');
+    }
+}
+
+// --- Azure AD Handling (Initialization and Callback) ---
+const azureAuthHandler = new AzureAuthHandler(azureConfig);
+
+// Check for Azure AD callback parameters
+window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    const error = params.get('error');
+    const errorDescription = params.get('error_description');
+
+    if (error) {
+        console.error(`Azure AD Error: ${error} - ${errorDescription}`);
+        updateStatus(`Azure AD login failed: ${errorDescription || error}`, 'error');
+    } else if (code && state) {
+        // Handle the callback if code and state are present
+        updateStatus('Processing Azure AD login...');
+        azureAuthHandler.handleCallback(code, state);
+    } else {
+        console.log("No Azure AD callback detected, showing login form.");
+        // Optionally hide/show login sections based on config availability
+        const azureLoginButton = document.getElementById('azure-login-button');
+        const azureLoginSection = document.getElementById('azure-login');
+        if (!azureConfig.clientId || !azureConfig.tenantId) {
+            if (azureLoginButton) azureLoginButton.style.display = 'none';
+            if (azureLoginSection) azureLoginSection.innerHTML = '<p>Azure AD login is not configured.</p>';
+            console.log("Azure AD config missing, hiding Azure login option.");
+        }
+    }
+    
+    // Add event listener for Enter key in password field
+    const passwordInput = document.getElementById('password');
+    if (passwordInput) {
+        passwordInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault(); // Prevent default form submission
+                handleCredentialLogin();
+            }
+        });
+    }
+});
+
+</script>
 
 <div id="debug-container" style="display: none;">
     <div id="debug-output"></div>

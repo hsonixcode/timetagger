@@ -236,6 +236,16 @@ async def get_webtoken(request):
     method = auth_info.get("method", "unspecified")
     logger.info(f"Auth method: {method}")
 
+    # Enforce credential login if credentials are set
+    if CREDENTIALS and method != "usernamepassword" and method != "azure":
+        logger.warning(f"Credentials are set, but auth method was '{method}'. Forcing username/password or Azure AD.")
+        return 401, {}, "Invalid authentication method. Use username/password or Azure AD."
+
+    # Disable localhost login if credentials are set
+    if CREDENTIALS and method == "localhost":
+        logger.warning("Attempted localhost login, but credentials are set. Denying.")
+        return 403, {}, "forbidden: localhost login disabled when credentials are set."
+
     if method == "localhost":
         return await get_webtoken_localhost(request, auth_info)
     elif method == "usernamepassword":
@@ -371,14 +381,44 @@ async def get_webtoken_proxy(request, auth_info):
 
 
 async def get_webtoken_usernamepassword(request, auth_info):
-    """Disabled local login handler."""
-    return 403, {}, "Local login is disabled. Please use Azure AD authentication."
+    """An authentication handler that provides a webtoken when the
+    user provides the correct username and password hash as listed in
+    the server config (`config.credentials`). See `get_webtoken_unsafe()` for details.
+    """
+    logger.info("Starting get_webtoken_usernamepassword")
+    # Get username and password from request body
+    username = auth_info.get("username", "").strip()
+    password = auth_info.get("password", "").strip()
+    if not (username and password):
+        logger.warning("Username or password missing in request")
+        return 400, {}, "bad request: username or password missing"
+    # Get hash from config
+    hash = CREDENTIALS.get(username, "")
+    if not hash:
+        logger.warning(f"Username '{username}' not found in credentials")
+        return 403, {}, "forbidden: invalid credentials"
+    # Check the hash!
+    # Note that bcrypt handles the salt internally.
+    if not bcrypt.checkpw(password.encode(), hash.encode()):
+        logger.warning(f"Password check failed for user '{username}'")
+        return 403, {}, "forbidden: invalid credentials"
+    # Return the webtoken
+    logger.info(f"Credentials validated successfully for user '{username}'")
+    token = await get_webtoken_unsafe(username)
+    logger.info(f"Generated token for user '{username}': {token[:10]}...")
+    return 200, {}, dict(token=token)
 
 
 async def get_webtoken_localhost(request, auth_info):
     """An authentication handler that provides a webtoken when the
     hostname is localhost. See `get_webtoken_unsafe()` for details.
+    THIS IS DISABLED IF CREDENTIALS ARE SET.
     """
+    # Explicitly disable if CREDENTIALS are set
+    if CREDENTIALS:
+        logger.warning("Attempted localhost login, but credentials are set. Denying.")
+        return 403, {}, "forbidden: localhost login disabled when credentials are set."
+        
     if not config.bind.startswith("127.0.0.1"):
         return (
             403,
