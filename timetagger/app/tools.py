@@ -3,7 +3,7 @@ A small set of tools for authentication, storage, and communication with the ser
 Or ... the minimum tools to handle the above things.
 """
 
-from pscript.stubs import window, JSON, localStorage, location, console, fetch
+from pscript.stubs import window, JSON, localStorage, location, console, fetch, Date
 
 
 # %% General
@@ -125,14 +125,26 @@ def build_api_url(suffix):
 
 def get_auth_info():
     """Get the authentication info or None."""
-    x = localStorage.getItem("timetagger_auth_info")
-    if x:
+    console.log("[tools.py] get_auth_info called.")
+    auth_info_str = localStorage.getItem("timetagger_auth_info")
+    console.log("[tools.py] timetagger_auth_info from localStorage:", 'Present' if auth_info_str else 'MISSING')
+    if auth_info_str:
         try:
-            return JSON.parse(x)
+            auth_info = JSON.parse(auth_info_str)
+            console.log("[tools.py] Successfully parsed auth_info:", auth_info)
+            # Optional: Add expiration check here if needed by the app
+            # expires = auth_info.get('expires', 0)
+            # now = Date.now() / 1000
+            # if expires < now:
+            #     console.log("[tools.py] Parsed token is expired.")
+            #     return None # Or trigger renewal?
+            return auth_info
         except Exception as err:
-            console.warn("Cannot parse JSON auth info: " + str(err))
+            console.warn("[tools.py] Cannot parse JSON auth info: " + str(err))
+            localStorage.removeItem("timetagger_auth_info") # Clear invalid item
             return None
     else:
+        console.log("[tools.py] No auth_info found in storage.")
         return None
 
 

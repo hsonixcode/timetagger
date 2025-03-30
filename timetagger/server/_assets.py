@@ -58,6 +58,16 @@ def md2html(text, template):
     title = title or "TimeTagger"
     description = description or title
     assert '"' not in description
+    
+    # Process template variables in the text first
+    if isinstance(template, str):
+        template = jinja2.Template(template)
+    text = jinja2.Template(text).render(
+        timetagger_azure_client_id=os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
+        timetagger_azure_tenant_id=os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
+        timetagger_azure_client_secret=os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
+    )
+    
     # Convert font-awesome codepoints to Unicode chars
     for match in reversed(list(re_fas.finditer(text))):
         text = (
@@ -79,8 +89,6 @@ def md2html(text, template):
     # Turn md into html and store
     main = markdown.markdown(text, extensions=["fenced_code"])
 
-    if isinstance(template, str):
-        template = jinja2.Template(template)
     return template.render(
         title=title,
         description=description,
@@ -88,6 +96,9 @@ def md2html(text, template):
         embedded_script="",
         embedded_style=style_embed,
         versionstring=versionstring,
+        timetagger_azure_client_id=os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
+        timetagger_azure_tenant_id=os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
+        timetagger_azure_client_secret=os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
     )
 
 

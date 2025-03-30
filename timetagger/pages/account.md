@@ -24,9 +24,16 @@ async function refresh_auth_status() {
 
     if (auth) {
         let html = "Logged in as <b>" + auth.username + "</b>";
-        //html += "<br>Web token valid until ";
-        //html += new window.Date(auth.exp * 1000).toISOString().split("T")[0];
-        //html += " (will be auto-renewed)";
+        // Decode the JWT token to get expiration
+        const tokenParts = auth.token.split('.');
+        const tokenPayload = JSON.parse(window.atob(tokenParts[1]));
+        const expiresDate = new Date(tokenPayload.exp * 1000);
+        const expiresStr = expiresDate.toLocaleString();
+        
+        html += "<br><span class='token-status'>Web Token Status:</span>";
+        html += "<br>✓ Valid until: " + expiresStr;
+        html += "<br>✓ Seed: " + tokenPayload.seed;
+        
         el.innerHTML = html;
         logoutallbutton.disabled = false;
     } else {
@@ -40,7 +47,7 @@ async function refresh_api_token(reset) {
     let resetapikeybutton = document.getElementById('resetapikey');
     let auth = tools.get_auth_info();
 
-    el.innerHTML = "Getting Getting API token ...";
+    el.innerHTML = "Getting API token ...";
     await tools.sleepms(200);
 
     if (auth) {
@@ -53,10 +60,10 @@ async function refresh_api_token(reset) {
             return;
         }
         d = JSON.parse(await res.text());
-        el.innerText = d.token;
+        el.innerHTML = "<span class='token-status'>API Token Status:</span><br>✓ Active<br>Token: " + d.token;
         resetapikeybutton.disabled = false;
     } else {
-        el.innerHTML = "Not available.";
+        el.innerHTML = "<span class='token-status'>API Token Status:</span><br>✗ Not available (not logged in)";
         resetapikeybutton.disabled = true;
     }
 }
@@ -98,6 +105,13 @@ window.addEventListener("load", refresh);
     overflow-wrap: anywhere;
     margin-left: 5px;
     font-size:80%;
+}
+
+.token-status {
+    font-weight: bold;
+    color: #333;
+    margin-top: 10px;
+    display: block;
 }
 </style>
 

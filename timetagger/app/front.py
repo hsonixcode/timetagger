@@ -3,8 +3,17 @@ Front end implementation in PScript.
 """
 
 from pscript import this_is_js
-from pscript.stubs import window, Math, time, perf_counter
+from pscript.stubs import window, Math, time, perf_counter, console, localStorage
 
+# --- Immediate localStorage Check ---
+try:
+    early_token = localStorage.getItem('timetagger_auth_info')
+    console.log("[front.py - EARLY CHECK] timetagger_auth_info from localStorage:", 'Present' if early_token else 'MISSING')
+    if early_token:
+        console.log("[front.py - EARLY CHECK] Value(start):", early_token[:50] + '...')
+except Exception as e:
+    console.error("[front.py - EARLY CHECK] Error reading localStorage:", e)
+# --- End Immediate Check ---
 
 if this_is_js():
     dt = window.dt

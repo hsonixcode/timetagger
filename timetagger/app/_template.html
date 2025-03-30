@@ -25,6 +25,8 @@
 
   <script>
   window.timetaggerversion = '{{ versionstring }}';
+  window.AZURE_CLIENT_ID = '{{ azure_client_id }}';
+  window.AZURE_TENANT_ID = '{{ azure_tenant_id }}';
   // Detect features
   window.browser_supported = false;
   if (window.crypto && window.crypto.getRandomValues &&
@@ -62,6 +64,94 @@
         <img id='ttlogo_tg' alt='TimeTagger logo' src='timetagger192_tg.png' width='2px' />
     </div>
 </main>
+
+<div id="loading">Loading...</div>
+<script>
+    // Function to check if scripts are loaded
+    async function checkInitialization() {
+        const requiredScripts = ['tools', 'utils', 'dt', 'stores', 'dialogs', 'front'];
+        const maxAttempts = 100; // 10 seconds
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+            const missingScripts = requiredScripts.filter(script => !window[script]);
+            if (missingScripts.length === 0) {
+                return true;
+            }
+            
+            console.log('Waiting for scripts to load... Missing:', missingScripts);
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+        }
+        
+        throw new Error('Tools not initialized after timeout');
+    }
+    
+    // Function to load scripts sequentially
+    async function loadScriptSequentially(scripts) {
+        for (const script of scripts) {
+            try {
+                console.log('Loading script:', script);
+                await new Promise((resolve, reject) => {
+                    const scriptEl = document.createElement('script');
+                    scriptEl.src = script;
+                    scriptEl.onload = resolve;
+                    scriptEl.onerror = reject;
+                    document.head.appendChild(scriptEl);
+                });
+                
+                // Add a small delay after loading dt.js to ensure it's initialized
+                if (script.includes('dt.js')) {
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+            } catch (error) {
+                console.error('Failed to load script:', script, error);
+                throw error;
+            }
+        }
+    }
+    
+    // Function to execute code after scripts are loaded
+    window.executeAfterScriptsLoaded = async function(callback) {
+        try {
+            await checkInitialization();
+            callback();
+        } catch (error) {
+            console.error('Failed to execute after scripts loaded:', error);
+            throw error;
+        }
+    };
+    
+    // Load scripts
+    window.addEventListener('load', async function() {
+        try {
+            const scripts = [
+                './tools.js',
+                './utils.js',
+                './dt.js',
+                './stores.js',
+                './dialogs.js',
+                './front.js'
+            ];
+            
+            await loadScriptSequentially(scripts);
+            await checkInitialization();
+            
+            // Remove loading indicator
+            document.getElementById('loading').style.display = 'none';
+            
+            // Initialize store if needed
+            if (typeof window.store === 'undefined' && window.stores && window.stores.ConnectedDataStore) {
+                console.log('Initializing store...');
+                window.store = new window.stores.ConnectedDataStore();
+                console.log('Store initialized successfully');
+            }
+        } catch (error) {
+            console.error('Failed to initialize application:', error);
+            document.getElementById('loading').innerHTML = 'Failed to load application: ' + error.message;
+        }
+    });
+</script>
 
 </body>
 </html>
