@@ -338,7 +338,6 @@ class MenuDialog(BaseDialog):
 
     def open(self):
         """Show/open the dialog ."""
-
         # Put the menu right next to the menu button
         self.maindiv.style.top = "5px"
         self.maindiv.style.left = "50px"
@@ -360,6 +359,16 @@ class MenuDialog(BaseDialog):
 
         is_installable = window.pwa and window.pwa.deferred_prompt
 
+        # Determine if Azure AD seems configured (can check localStorage here or pass via a global var)
+        # Using localStorage for simplicity here, assuming config page saves there.
+        azure_configured = False
+        try:
+            if localStorage.getItem('timetagger_azure_client_id') and localStorage.getItem('timetagger_azure_tenant_id'):
+                azure_configured = True
+                console.log("MenuDialog: Azure AD seems configured via localStorage.")
+        except Exception as e:
+            console.error("MenuDialog: Error checking localStorage for Azure config:", e)
+
         # Display sensible text in "header"
         if window.store.__name__.startswith("Demo"):
             text = "This is the Demo"
@@ -379,22 +388,31 @@ class MenuDialog(BaseDialog):
             whatsnew += " in version " + window.timetaggerversion.lstrip("v")
 
         container = self.maindiv
-        for icon, show, title, func in [
+        # Clear previous items if any
+        while container.lastChild and container.lastChild != loggedinas:
+             container.removeChild(container.lastChild)
+
+        # Define menu items
+        menu_structure = [
             (None, store_valid, "Manage", None),
             ("\uf002", store_valid, "Search", self._search),
             ("\uf56f", store_valid, "Import records", self._import),
             ("\uf56e", store_valid, "Export all records", self._export),
             (None, True, "User", None),
             ("\uf013", store_valid, "Settings", self._show_settings),
-            ("\uf2bd", True, "Account", "../account"),
-            ("\uf2f6", not logged_in, "Login", "../login"),
-            ("\uf2f5", logged_in, "Logout", "../logout"),
+            ("\uf2bd", True, "Account", "/timetagger/account"), # Uncommented and updated link
+            # Add Configure External Auth Link - SHOW ONLY WHEN LOGGED IN
+            ("\uf0ad", logged_in, "Configure External Auth", "/timetagger/configure_external_auth"),
+            ("\uf2f6", not logged_in, "Login", "/timetagger/login"),
+            ("\uf2f5", logged_in, "Logout", self._logout),
             (None, is_installable, None, None),
             ("\uf3fa", is_installable, "<b>Install this app</b>", self._do_install),
-        ]:
+        ]
+
+        for icon, show, title, func_or_url in menu_structure:
             if not show:
                 continue
-            elif not func:
+            elif not func_or_url:
                 # Divider
                 el = document.createElement("div")
                 el.setAttribute("class", "divider")
@@ -408,16 +426,45 @@ class MenuDialog(BaseDialog):
                     html += f"<i class='fas'>{icon}</i>&nbsp;&nbsp;"
                 html += title
                 el.innerHTML = html
-                if isinstance(func, str):
-                    el.href = func
+                if isinstance(func_or_url, str):
+                    el.href = func_or_url # Navigate to URL
+                    el.onclick = self.close # Close menu on link click
                 else:
-                    el.onclick = func
+                    # Use a helper to create the click handler with correct scope
+                    el.onclick = self._create_action_handler(func_or_url, title)
+
                 container.appendChild(el)
 
         # more: Settings, User account, inport / export
 
         self.maindiv.classList.add("verticalmenu")
         super().open(None)
+
+    def _create_action_handler(self, func, title):
+        """Helper function to create an onclick handler with correct scope."""
+        def handler(event):
+            # Optional: Prevent default link behavior if any
+            if event and hasattr(event, 'preventDefault'): 
+                event.preventDefault()
+            self._execute_action(func, title)
+        return handler
+
+    def _execute_action(self, func, title="Unknown"):
+         """Close the dialog then execute the function."""
+         self.close()
+         if func:
+             func()
+
+    def _logout(self):
+         """Handle logout action."""
+         ok = window.confirm("Are you sure you want to log out?")
+         if ok:
+             if window.tools and hasattr(window.tools, 'clear_auth_info'):
+                  window.tools.clear_auth_info()
+             else: # Fallback if tools.js isn't fully loaded or structured as expected
+                  localStorage.removeItem('timetagger_auth_token')
+                  localStorage.removeItem('timetagger_auth_info') # Try removing both common keys
+             window.location.href = '/timetagger/login' # Redirect to login page
 
     def _show_settings(self):
         self.close()
@@ -440,10 +487,8 @@ class MenuDialog(BaseDialog):
 
     def _search(self):
         print("[MenuDialog] Search button clicked")
-        console.log("[MenuDialog] Search button clicked")
         self.close()
         print("[MenuDialog] Attempting to open search dialog")
-        console.log("[MenuDialog] Attempting to open search dialog")
         try:
             if not hasattr(self._canvas, 'search_dialog'):
                 print("[MenuDialog] Error: canvas has no search_dialog")
@@ -451,10 +496,8 @@ class MenuDialog(BaseDialog):
                 return
             self._canvas.search_dialog.open()
             print("[MenuDialog] Search dialog opened successfully")
-            console.log("[MenuDialog] Search dialog opened successfully")
         except Exception as e:
             print("[MenuDialog] Error opening search dialog:", str(e))
-            console.error("[MenuDialog] Error opening search dialog:", e)
             error = window.Error(f"Failed to open search dialog: {str(e)}")
             error.original_error = e
             raise error
@@ -2459,7 +2502,6 @@ class SearchDialog(BaseDialog):
 
     def open(self):
         print("[SearchDialog] Opening search dialog")
-        console.log("[SearchDialog] Opening search dialog")
         try:
             self.maindiv.innerHTML = """
                 <h1><i class='fas'>\uf002</i>&nbsp;&nbsp;Search records and tags

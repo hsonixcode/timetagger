@@ -933,6 +933,7 @@ class TopWidget(Widget):
         # case canvas does not have focus), but don't listen for events from dialogs.
         window.addEventListener("keydown", self._on_key, 0)
         self._canvas.node.addEventListener("keydown", self._on_key, 0)
+        # No need to check Azure config here anymore for the menu item
 
     def on_draw(self, ctx, menu_only=False):
         self._picker.clear()
@@ -1138,6 +1139,19 @@ class TopWidget(Widget):
             options = {"ref": "middleleft", "color": "#000", "body": COLORS.acc_clr}
             self._draw_button(ctx, x + 30, y_balloon, None, 30, text, "", "", options)
 
+        # --- Menu --- Need to know menu geometry early
+        # Note that these positions depend on the geometry calculated below
+
+        menu_items = []
+        menu_items.append(("Search", "search", "Ctrl+F"))
+        menu_items.append(("Import records", "import_records"))
+        menu_items.append(("Export all records", "export_all"))
+        menu_items.append(None)  # separator
+        menu_items.append(("Settings", "settings", "Ctrl+,"))
+        menu_items.append(("Configure External Auth", "configure_external_auth")) # New item
+        menu_items.append(("Account", "account_page"))
+        menu_items.append(("Logout", "logout"))
+
     def _draw_menu_button(self, ctx, x1, y1, x2, y2):
         if window.store.__name__.startswith("Demo"):
             text = "Demo"
@@ -1159,8 +1173,10 @@ class TopWidget(Widget):
             "ref": "centermiddle",
             "color": COLORS.sec2_clr,
         }
+        # Use "menu" as the action string
+        button_action = "menu"
         dx = self._draw_button(
-            ctx, x, y + yoffset, None, 48, "fas-\uf0c9", "menu", "", opt
+            ctx, x, y + yoffset, None, 48, "fas-\uf0c9", button_action, "", opt
         )
 
         # Draw title
@@ -1512,6 +1528,17 @@ class TopWidget(Widget):
             self._handle_button_press("report")
         elif e.key.lower() == "i":
             self._handle_button_press("guide")
+        elif e.key.lower() == "settings":
+            self.canvas.settings_dialog.open()
+        elif e.key.lower() == "account_page":
+            window.location.href = '/timetagger/account'
+        elif e.key.lower() == "configure_external_auth": # Add key handler if desired, maybe map to 'e'?
+            window.location.href = '/timetagger/configure_external_auth'
+        elif e.key.lower() == "logout":
+            ok = window.confirm("Are you sure you want to log out?")
+            if ok:
+                window.tools.clear_auth_info()
+                window.location.reload()
         else:
             return
         e.preventDefault()
@@ -1520,7 +1547,17 @@ class TopWidget(Widget):
         now = self._canvas.now()
 
         if action == "menu":
-            self._canvas.menu_dialog.open()
+            # Define menu items dynamically here
+            menu_items = []
+            menu_items.append(("Search", "search", "Ctrl+F"))
+            menu_items.append(("Import records", "import_records"))
+            menu_items.append(("Export all records", "export_all"))
+            menu_items.append(None)  # separator
+            menu_items.append(("Settings", "settings", "Ctrl+,"))
+            menu_items.append(("Configure External Auth", "configure_external_auth")) # New item
+            menu_items.append(("Account", "account_page"))
+            menu_items.append(("Logout", "logout"))
+            self._canvas.menu_dialog.open(menu_items) # Pass items to open()
 
         elif action == "search":
             self._canvas.search_dialog.open()
@@ -2802,7 +2839,7 @@ class RecordsWidget(Widget):
                     self._selected_record = [picked.record, 0, t]
                 elif picked.button is True:
                     # A button was pressed
-                    self._handle_button_press(picked.action, picked)
+                    self._handle_button_press(picked.action)
                 self.update()
                 return
 
@@ -3020,7 +3057,7 @@ class RecordsWidget(Widget):
                 self._canvas.range.snap()
                 self.update()
 
-    def _handle_button_press(self, action, picked):
+    def _handle_button_press(self, action):
         now = self._canvas.now()
         if action == "showrecords":
             self._canvas._prefer_show_analytics = False

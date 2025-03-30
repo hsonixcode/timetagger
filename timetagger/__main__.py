@@ -26,6 +26,7 @@ import logging
 import base64
 from base64 import b64decode
 from importlib import resources
+import jinja2
 
 import bcrypt
 import asgineer
@@ -55,7 +56,7 @@ if __name__ == "__main__" and len(sys.argv) >= 2:
         sys.exit(0)
 
 
-logger = logging.getLogger("asgineer")
+logger = logging.getLogger(__name__) # Use current module name for logger
 
 # Get sets of assets provided by TimeTagger
 common_assets = create_assets_from_dir(resources.files("timetagger.common"))
@@ -63,18 +64,48 @@ apponly_assets = create_assets_from_dir(resources.files("timetagger.app"))
 image_assets = create_assets_from_dir(resources.files("timetagger.images"))
 page_assets = create_assets_from_dir(resources.files("timetagger.pages"))
 
-# Remove index.md from page_assets if it exists
+# Explicitly remove potentially problematic files if they exist
 if "index.md" in page_assets:
     del page_assets["index.md"]
 if "index.html" in page_assets:
     del page_assets["index.html"]
+if "_template.html" in page_assets: # Ensure template from pages is not used directly
+    del page_assets["_template.html"]
+if "" in page_assets: # Ensure empty key (rendered index) is not present yet
+     del page_assets[""]
+if "configure_external_auth.html" in page_assets: # Remove pre-rendered version if it exists
+     del page_assets["configure_external_auth.html"]
 
-# Combine into two groups. You could add/replace assets here.
+
+# Combine asset dictionaries
 app_assets = dict(**common_assets, **image_assets, **apponly_assets)
-web_assets = dict(**common_assets, **image_assets, **page_assets)
+# Render index.md from app_assets into the empty key ""
+if "index.md" in app_assets:
+    index_md_content = app_assets.pop("index.md") # Remove md source
+    # Need the template from apponly_assets or default
+    app_template_html = apponly_assets.get("_template.html", default_template)
+    app_template = jinja2.Template(app_template_html)
+    rendered_index_html = md2html(index_md_content, app_template)
+    app_assets[""] = rendered_index_html # Add rendered HTML with empty key
+    logger.info("Rendered app/index.md into app_assets['']")
 
-# Log the keys of the collected app_assets
-logger.info(f"Collected app_asset keys: {list(app_assets.keys())}")
+
+web_assets = dict(**common_assets, **image_assets, **page_assets)
+# Render configure_external_auth.md into web_assets["configure_external_auth"]
+if "configure_external_auth.md" in web_assets:
+     config_md_content = web_assets.pop("configure_external_auth.md") # Remove md source
+     # Use the default template or one from page_assets if available
+     page_template_html = page_assets.get("_template.html", default_template)
+     page_template = jinja2.Template(page_template_html)
+     rendered_config_html = md2html(config_md_content, page_template)
+     web_assets["configure_external_auth"] = rendered_config_html # Add rendered HTML
+     logger.info("Rendered pages/configure_external_auth.md into web_assets['configure_external_auth']")
+else:
+     logger.warning("configure_external_auth.md not found in page_assets")
+
+# Log the keys of the collected assets AFTER processing
+logger.info(f"Final app_asset keys: {list(app_assets.keys())}")
+logger.info(f"Final web_asset keys: {list(web_assets.keys())}")
 
 # Enable the service worker so the app can be used offline and is installable
 enable_service_worker(app_assets)
@@ -118,17 +149,28 @@ async def main_handler(request):
     # Handle app path and app assets
     if path == "app" or path == "app/":
         logger.info(f"Serving pre-rendered index page (from index.md) for path: {path}")
-        # Look for the empty key which corresponds to index.md -> index.html -> ""
-        index_page_content = app_assets.get("")
+        index_page_content = app_assets.get("") # Get the rendered index page
         if index_page_content is not None:
+            # Inject current Azure AD config from localStorage into the template context
+            # NOTE: This is a simplified approach. Ideally, the server fetches/validates this.
+            # We pass placeholders here; the actual values are loaded by JS on the page.
+            template_context = {
+                 'timetagger_azure_client_id': '', # Placeholder
+                 'timetagger_azure_tenant_id': '', # Placeholder
+                 'timetagger_azure_redirect_uri': '', # Placeholder
+                 'timetagger_azure_client_secret': '' # Placeholder
+            }
+            # Re-render the template with context (if needed by template, maybe not)
+            # For now, just return the pre-rendered content.
+            # A more advanced version might re-parse and inject context serverside.
             return 200, {"Content-Type": "text/html; charset=utf-8"}, index_page_content
         else:
              logger.error("Could not find the pre-rendered index page ('') in app_assets!")
              return 404, {}, "Error: Application index page not found."
-
     elif path.startswith("app/"):
         asset_path = path[4:]
         logger.info(f"Serving app asset for path: {path}, asset requested: {asset_path}")
+        # Use app_asset_handler, which uses the app_assets dictionary
         return await app_asset_handler(request, asset_path)
 
     # Handle API requests
@@ -137,23 +179,35 @@ async def main_handler(request):
         logger.info(f"Forwarding to API handler for path: {path}, API path: {api_path}")
         return await api_handler(request, api_path)
 
-    # Handle login, account, and auth callback paths
-    if path in ["login", "auth/callback", "account"]:
-        logger.info(f"Serving pages handler for path: {path}")
-        template_context = {
-            'timetagger_azure_client_id': os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
-            'timetagger_azure_tenant_id': os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
-            'timetagger_azure_redirect_uri': os.environ.get('TIMETAGGER_AZURE_REDIRECT_URI', ''),
-            'timetagger_azure_client_secret': os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
-        }
-        # For callback, use login page
-        page_to_serve = path
-        if path == "auth/callback":
-            page_to_serve = "login"
-            logger.info(f"Mapping 'auth/callback' to 'login' page.")
-        return await pages_handler(request, page_to_serve, template_context)
+    # Handle configure_external_auth page
+    if path == "configure_external_auth":
+        logger.info(f"Serving configure_external_auth page")
+        config_page_content = web_assets.get("configure_external_auth")
+        if config_page_content is not None:
+             # Similar to app index, pass placeholders; JS will load from localStorage
+             template_context = {
+                 'timetagger_azure_client_id': '', 
+                 'timetagger_azure_tenant_id': '',
+                 'timetagger_azure_redirect_uri': '',
+                 'timetagger_azure_client_secret': '' 
+             }
+             # Return the pre-rendered config page HTML
+             return 200, {"Content-Type": "text/html; charset=utf-8"}, config_page_content
+        else:
+             logger.error("Could not find the pre-rendered configure_external_auth page in web_assets!")
+             return 404, {}, "Error: Configuration page not found."
 
-    # Handle all other paths with web assets
+    # Handle login, account pages (use web_asset_handler for generic pages now)
+    if path in ["login", "account", "auth/callback"]:
+        logger.info(f"Serving web asset handler for generic page path: {path}")
+        # Let web_asset_handler serve the pre-rendered HTML from web_assets (e.g., web_assets['login'])
+        page_key = path
+        if path == "auth/callback": # Map callback to login page content
+             page_key = "login"
+             logger.info("Mapping 'auth/callback' to 'login' content.")
+        return await web_asset_handler(request, page_key)
+
+    # Handle all other paths with web assets (default fallback)
     logger.info(f"Serving web asset handler for path: {path}")
     return await web_asset_handler(request, path)
 
