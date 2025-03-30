@@ -746,13 +746,17 @@ class BaseDataStore:
             )
         else:
             self.state = state
+            # Trigger UI update when state changes
+            if window.canvas:
+                window.canvas.update()
 
     def _put(self, kind, *items):
         """Called by the substores for new/modified items."""
         for i in range(len(items)):
             item = items[i]
             self._to_push[kind][item.key] = item
-        self.sync_soon(1.5)
+        # Trigger a quick sync for immediate changes
+        self.sync_soon(0.5)  # Quick 0.5 second sync for new changes
         self._set_state("pending")
 
     def sync_soon(self, timeout=10):
@@ -770,7 +774,7 @@ class BaseDataStore:
                 window.canvas.update()
         finally:
             if self._sync_timeout is None and not window.document.hidden:
-                self.sync_soon()  # Post a sync to keep getting updates
+                self.sync_soon(10)  # Regular 10-second polling for updates
         # Reset state, leave current state shown for a bit if _sync() set it.
         if self.state == "sync":
             self._set_state("", 0.25)

@@ -33,7 +33,23 @@ ANALYSIS_ROUNDNESS = 6
 
 PI = 3.141_592_653_589_793
 
-COLORS = {}
+COLORS = {
+    "prim1_clr": "#2196F3",  # Primary color
+    "prim2_clr": "#1976D2",  # Darker primary color
+    "acc_clr": "#FFC107",  # Accent color
+    "panel_bg": "#FFFFFF",  # Background color of panels
+    "button_bg": "#FFFFFF",  # Background color of buttons
+    "button_shadow": "rgba(0, 0, 0, 0.2)",  # Shadow color for buttons
+    "record_bg": "#FFFFFF",  # Background color for records
+    "record_bg_running": "#E3F2FD",  # Background color for running records
+    "record_bg_pending": "#F5F5F5",  # Background color for pending records
+    "record_bg_running_pending": "#EDE7F6",  # Background color for running pending records
+    "record_edge": "#2196F3",  # Edge color for records
+    "record_text": "#212121",  # Text color for records
+    "tick_text": "#757575",  # Text color for ticks
+    "tick_stripe1": "#E0E0E0",  # Color for primary tick stripes
+    "tick_stripe2": "#EEEEEE",  # Color for secondary tick stripes
+}
 
 # These get updated when the canvas resizes
 FONT = {
@@ -1489,45 +1505,45 @@ class TopWidget(Widget):
             return  # don't fight with the browser
         #
         elif e.key.lower() == "f":
-            self._handle_button_press("search")
+            self._handle_button_press("search", None)
         elif e.key.lower() == "backspace":
-            self._handle_button_press("select_none")
+            self._handle_button_press("select_none", None)
         #
         elif e.key.lower() == "arrowup" or e.key.lower() == "pageup":
-            self._handle_button_press("nav_backward")
+            self._handle_button_press("nav_backward", None)
         elif e.key.lower() == "arrowdown" or e.key.lower() == "pagedown":
-            self._handle_button_press("nav_forward")
+            self._handle_button_press("nav_forward", None)
         elif e.key.lower() == "arrowleft":
-            self._handle_button_press("nav_zoom_" + self._current_scale["out"])
+            self._handle_button_press("nav_zoom_" + self._current_scale["out"], None)
         elif e.key.lower() == "arrowright":
-            self._handle_button_press("nav_zoom_" + self._current_scale["in"])
+            self._handle_button_press("nav_zoom_" + self._current_scale["in"], None)
         elif e.key.lower() == "n" or e.key.lower() == "home" or e.key.lower() == "end":
-            self._handle_button_press("nav_snap_now" + self._current_scale["now"])
+            self._handle_button_press("nav_snap_now" + self._current_scale["now"], None)
         #
         elif e.key.lower() == "d":
-            self._handle_button_press("nav_snap_today")
+            self._handle_button_press("nav_snap_today", None)
         elif e.key.lower() == "w":
-            self._handle_button_press("nav_snap_now1W")
+            self._handle_button_press("nav_snap_now1W", None)
         elif e.key.lower() == "m":
-            self._handle_button_press("nav_snap_now1M")
+            self._handle_button_press("nav_snap_now1M", None)
         elif e.key.lower() == "q":
-            self._handle_button_press("nav_snap_now3M")
+            self._handle_button_press("nav_snap_now3M", None)
         elif e.key.lower() == "y":
-            self._handle_button_press("nav_snap_now1Y")
+            self._handle_button_press("nav_snap_now1Y", None)
         elif e.key.lower() == "t":
-            self._handle_button_press("nav_menu")
+            self._handle_button_press("nav_menu", None)
         #
         elif e.key.lower() == "s":
             if e.shiftKey:
-                self._handle_button_press("record_resume")
+                self._handle_button_press("record_resume", None)
             else:
-                self._handle_button_press("record_start")
+                self._handle_button_press("record_start", None)
         elif e.key.lower() == "x":
-            self._handle_button_press("record_stopall")
+            self._handle_button_press("record_stopall", None)
         elif e.key.lower() == "r":
-            self._handle_button_press("report")
+            self._handle_button_press("report", None)
         elif e.key.lower() == "i":
-            self._handle_button_press("guide")
+            self._handle_button_press("guide", None)
         elif e.key.lower() == "settings":
             self.canvas.settings_dialog.open()
         elif e.key.lower() == "account_page":
@@ -1543,9 +1559,8 @@ class TopWidget(Widget):
             return
         e.preventDefault()
 
-    def _handle_button_press(self, action):
+    def _handle_button_press(self, action, picked=None):
         now = self._canvas.now()
-
         if action == "menu":
             # Define menu items dynamically here
             menu_items = []
@@ -1680,6 +1695,44 @@ class TopWidget(Widget):
             # A selection action
             if action == "select_none":
                 self._canvas.widgets.AnalyticsWidget.unselect_all_tags()
+
+        elif action.startswith("zoom_"):
+            t1, t2 = self._canvas.range.get_target_range()
+            res = action.split("_")[-1]
+            now_is_in_range = t1 <= now <= t2
+            if res == "-1" or res == "+1":
+                if res == "-1":
+                    t1, t2 = self._canvas.range.get_snap_range(-1)
+                else:
+                    t1, t2 = self._canvas.range.get_snap_range(+1)
+                if now_is_in_range:
+                    t1, t2 = now - 0.5 * (t2 - t1), now + 0.5 * (t2 - t1)
+            else:
+                t_ref = now if (t1 <= now <= t2) else (t2 + t1) / 2
+                t1 = dt.floor(t_ref, res)
+                t2 = dt.add(t1, res)
+            self._canvas.range.animate_range(t1, t2)
+        elif action.startswith("step_"):
+            t1, t2 = self._canvas.range.get_target_range()
+            nsecs = t2 - t1
+            if action == "step_backward":
+                self._canvas.range.animate_range(t1 - nsecs, t1)
+            else:
+                self._canvas.range.animate_range(t2, t2 + nsecs)
+        elif action == "editrecord":
+            if picked and hasattr(picked, 'key'):
+                record = window.store.records.get_by_key(picked.key)
+                self._canvas.record_dialog.open(
+                    "Edit", record, self._selected_record_updated
+                )
+        elif action == "editcurrentrecord":
+            # The button for the currently selected record
+            if self._selected_record:
+                record = self._selected_record[0]  # before-drag!
+                record = window.store.records.get_by_key(record.key)
+                self._canvas.record_dialog.open(
+                    "Edit", record, self._selected_record_updated
+                )
 
 
 class RecordsWidget(Widget):
@@ -2214,17 +2267,6 @@ class RecordsWidget(Widget):
         t2_or_now = now if (record.t1 == record.t2) else record.t2
 
         # Define all x's
-        #
-        #
-        #     x1 x2  x3 x4   x5                   x6
-        #                     ____________________     ty1
-        # ry1  |  ____  |    /                    \
-        #      | /    \ |    \____________________/
-        #      | |    | |                              ty2
-        #      | |    | |
-        #      | \____/ |
-        # ry2  |        |
-
         x2 = x1 + 8
         x3 = x4
         x5 = x4 + 25
@@ -2245,17 +2287,12 @@ class RecordsWidget(Widget):
         if self._dragging_new_record:
             tags_selected = False
 
-        # # Determine wheter this record is selected in the timeline
-        # selected_in_timeline = False
-        # if self._selected_record is not None:
-        #     if record.key == self._selected_record[0].key:
-        #         selected_in_timeline = True
-
         # Get position in pixels
         ry1 = y0 + npixels * (record.t1 - t1) / nsecs
         ry2 = y0 + npixels * (t2_or_now - t1) / nsecs
         if ry1 > ry2:
             ry1, ry2 = ry2, ry1  # started timer, then changed time offset
+
         # Round to pixels? Not during interaction to avoid jumps!
         if self._round_top_bottom:
             ry1 = grid_round(ry1)
@@ -2275,19 +2312,27 @@ class RecordsWidget(Widget):
 
         timeline_only = ry2 < y1 or ry1 > y2
 
-        # Make the timeline-part clickable - the pick region is increased if needed
+        # Make the timeline-part clickable
         ry1_, ry2_ = ry1, ry2
         if ry2 - ry1 < 16:
             ry1_, ry2_ = 0.5 * (ry1 + ry2) - 8, 0.5 * (ry1 + ry2) + 8
         self._picker.register(
             x2, ry1_, x3, ry2_, {"recordrect": True, "region": 0, "record": record}
         )
-        tt_text = tags.join(" ") + "\n(click to make draggable)"
+
+        # Add sync status to tooltip
+        sync_status = ""
+        if record.st == 0:
+            sync_status = "\n(Syncing...)"
+        elif window.store.state == "pending":
+            sync_status = "\n(Pending sync...)"
+        tt_text = tags.join(" ") + "\n(click to make draggable)" + sync_status
+        
         hover_timeline = self._canvas.register_tooltip(
             x2, ry1, x3, ry2 + outset, tt_text, "mouse"
         )
 
-        # Make description part clickable - the pick region is increased if needed
+        # Make description part clickable
         if not timeline_only:
             d = {
                 "button": True,
@@ -2296,7 +2341,7 @@ class RecordsWidget(Widget):
                 "key": record.key,
             }
             self._picker.register(x5, ty1, x6, ty2, d)
-            tt_text = tags.join(" ") + "\n(Click to edit)"
+            tt_text = tags.join(" ") + "\n(Click to edit)" + sync_status
             hover_description = self._canvas.register_tooltip(x5, ty1, x6, ty2, tt_text)
 
         # Cast a shadow if hovering
@@ -2307,7 +2352,7 @@ class RecordsWidget(Widget):
             ctx.lineTo(x3, 0.5 * (ry1 + ry2))
             ctx.closePath()
             ctx.shadowBlur = 6
-            ctx.shadowColor = "rgba(0, 0, 0, 0.8)"  # COLORS.button_shadow
+            ctx.shadowColor = "rgba(0, 0, 0, 0.8)"
             ctx.fill()
             ctx.shadowBlur = 0
         elif hover_description:
@@ -2322,7 +2367,7 @@ class RecordsWidget(Widget):
             ctx.fill()
             ctx.shadowBlur = 0
 
-        # Draw record representation
+        # Draw record representation with sync state
         path = utils.RoundedPath()
         if timeline_only:
             path.addVertex(x2, ry2, rne)
@@ -2339,7 +2384,12 @@ class RecordsWidget(Widget):
             path.addVertex(x5, ty2, 4)
             path.addVertex(x4, ry2, 4)
         path = path.toPath2D()
-        ctx.fillStyle = COLORS.record_bg_running if is_running else COLORS.record_bg
+
+        # Set fill color based on sync state
+        if record.st == 0:
+            ctx.fillStyle = COLORS.record_bg_pending if not is_running else COLORS.record_bg_running_pending
+        else:
+            ctx.fillStyle = COLORS.record_bg if not is_running else COLORS.record_bg_running
         ctx.fill(path)
 
         ctx.strokeStyle = COLORS.record_edge
@@ -2839,7 +2889,7 @@ class RecordsWidget(Widget):
                     self._selected_record = [picked.record, 0, t]
                 elif picked.button is True:
                     # A button was pressed
-                    self._handle_button_press(picked.action)
+                    self._handle_button_press(picked.action, picked)
                 self.update()
                 return
 
@@ -3057,8 +3107,7 @@ class RecordsWidget(Widget):
                 self._canvas.range.snap()
                 self.update()
 
-    def _handle_button_press(self, action):
-        now = self._canvas.now()
+    def _handle_button_press(self, action, picked=None):
         if action == "showrecords":
             self._canvas._prefer_show_analytics = False
             self._canvas.on_resize()

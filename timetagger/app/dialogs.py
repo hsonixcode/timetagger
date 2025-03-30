@@ -313,17 +313,34 @@ class NotificationDialog(BaseDialog):
     """Dialog to show a message to the user."""
 
     EXIT_ON_CLICK_OUTSIDE = True
-
+    
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._is_sync_notification = False
+    
     def open(self, message, title="Notification"):
         """Open the dialog with the given message."""
+        self._is_sync_notification = title == "Sync status"
         self.maindiv.innerHTML = f"""
             <div class='dialog-content'>
                 <h2>{title}</h2>
                 <p>{message}</p>
-                <button onclick='this.parentElement.parentElement.close()'>OK</button>
+                <button id="notification-ok-btn">OK</button>
             </div>
         """
+        ok_button = self.maindiv.querySelector("#notification-ok-btn")
+        ok_button.addEventListener("click", lambda ev: self.close())
         super().open()
+    
+    def close(self, e=None):
+        """Close the dialog without triggering unnecessary updates."""
+        if self.maindiv:
+            self._hide_dialog()
+            self.maindiv.style.display = "none"
+            show_background_div(False)
+            # Only trigger callback for sync notifications
+            if self._callback and self._is_sync_notification:
+                self._callback()
 
 
 class MenuDialog(BaseDialog):
