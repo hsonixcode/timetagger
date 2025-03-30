@@ -6,27 +6,36 @@
     <p>Enter the details for your Azure AD application registration.</p>
     <p id="save-status" style="color: green; font-weight: bold;"></p>
 
-    <div style="margin-bottom: 1em;">
-        <label for="azure-client-id">Client ID:</label><br>
-        <input type="text" id="azure-client-id" name="azure-client-id" style="width: 95%; padding: 8px; margin-bottom: 10px;">
+    <div style="margin-bottom: 1.5em; padding-bottom: 1em; border-bottom: 1px solid #eee;">
+        <label>
+            <input type="checkbox" id="azure-auth-enabled" name="azure-auth-enabled" onchange="toggleAzureFields()">
+            Enable Azure AD Authentication
+        </label>
     </div>
 
-    <div style="margin-bottom: 1em;">
-        <label for="azure-tenant-id">Tenant ID:</label><br>
-        <input type="text" id="azure-tenant-id" name="azure-tenant-id" style="width: 95%; padding: 8px; margin-bottom: 10px;">
-    </div>
+    <div id="azure-fields-container">
+        <div style="margin-bottom: 1em;">
+            <label for="azure-client-id">Client ID:</label><br>
+            <input type="text" id="azure-client-id" name="azure-client-id" style="width: 95%; padding: 8px; margin-bottom: 10px;">
+        </div>
 
-    <div style="margin-bottom: 1em;">
-        <label for="azure-client-secret">Client Secret:</label><br>
-        <input type="password" id="azure-client-secret" name="azure-client-secret" style="width: 95%; padding: 8px; margin-bottom: 10px;">
-        <small>Note: This secret is currently stored in your browser's local storage. For production, consider a more secure server-side storage method.</small>
+        <div style="margin-bottom: 1em;">
+            <label for="azure-tenant-id">Tenant ID:</label><br>
+            <input type="text" id="azure-tenant-id" name="azure-tenant-id" style="width: 95%; padding: 8px; margin-bottom: 10px;">
+        </div>
+
+        <div style="margin-bottom: 1em;">
+            <label for="azure-client-secret">Client Secret:</label><br>
+            <input type="password" id="azure-client-secret" name="azure-client-secret" style="width: 95%; padding: 8px; margin-bottom: 10px;">
+            <small>Note: This secret is currently stored in your browser's local storage. For production, consider a more secure server-side storage method.</small>
+        </div>
+        
+        <div style="margin-bottom: 1em;">
+             <label for="azure-redirect-uri">Redirect URI:</label><br>
+             <input type="text" id="azure-redirect-uri" name="azure-redirect-uri" style="width: 95%; padding: 8px; margin-bottom: 10px;" readonly>
+             <small>This should match the Redirect URI configured in Azure AD (usually `http://your-domain/timetagger/auth/callback` or `http://localhost:8000/timetagger/auth/callback`).</small>
+         </div>
     </div>
-    
-    <div style="margin-bottom: 1em;">
-         <label for="azure-redirect-uri">Redirect URI:</label><br>
-         <input type="text" id="azure-redirect-uri" name="azure-redirect-uri" style="width: 95%; padding: 8px; margin-bottom: 10px;" readonly>
-         <small>This should match the Redirect URI configured in Azure AD (usually `http://your-domain/timetagger/auth/callback` or `http://localhost:8000/timetagger/auth/callback`).</small>
-     </div>
 
 
     <button id="save-button" onclick="saveAzureConfig()" style="padding: 10px 15px;">Save Configuration</button>
@@ -34,31 +43,53 @@
 </div>
 
 <script>
+function toggleAzureFields() {
+    const isEnabled = document.getElementById('azure-auth-enabled').checked;
+    const fieldsContainer = document.getElementById('azure-fields-container');
+    const inputs = fieldsContainer.querySelectorAll('input[type="text"], input[type="password"]');
+    
+    fieldsContainer.style.opacity = isEnabled ? '1' : '0.5';
+    inputs.forEach(input => {
+        if (input.id !== 'azure-redirect-uri') { // Keep redirect URI always visible but controlled by enabled state
+             input.disabled = !isEnabled;
+        }
+    });
+    // Also disable save/clear buttons if not enabled? Or allow saving the disabled state? Let's allow saving.
+    // document.getElementById('save-button').disabled = !isEnabled;
+    // document.getElementById('clear-button').disabled = !isEnabled; // Keep clear always enabled maybe?
+}
+
 function loadAzureConfig() {
     console.log("Loading Azure config from localStorage...");
     const clientId = localStorage.getItem('timetagger_azure_client_id') || '';
     const tenantId = localStorage.getItem('timetagger_azure_tenant_id') || '';
     const clientSecret = localStorage.getItem('timetagger_azure_client_secret') || ''; // Load secret
+    const isEnabled = localStorage.getItem('timetagger_azure_auth_enabled') === 'true';
     const redirectUri = `${window.location.origin}/timetagger/auth/callback`; // Construct based on current location
 
 
+    document.getElementById('azure-auth-enabled').checked = isEnabled;
     document.getElementById('azure-client-id').value = clientId;
     document.getElementById('azure-tenant-id').value = tenantId;
     document.getElementById('azure-client-secret').value = clientSecret; // Set secret field
     document.getElementById('azure-redirect-uri').value = redirectUri;
 
-    console.log("Loaded - ClientID:", clientId ? '***' : 'Empty', "TenantID:", tenantId ? '***' : 'Empty', "Secret:", clientSecret ? '***' : 'Empty');
+    console.log("Loaded - Enabled:", isEnabled, "ClientID:", clientId ? '***' : 'Empty', "TenantID:", tenantId ? '***' : 'Empty', "Secret:", clientSecret ? '***' : 'Empty');
+    
+    toggleAzureFields(); // Apply initial enable/disable state
 
 }
 
 function saveAzureConfig() {
     console.log("Saving Azure config to localStorage...");
+    const isEnabled = document.getElementById('azure-auth-enabled').checked;
     const clientId = document.getElementById('azure-client-id').value.trim();
     const tenantId = document.getElementById('azure-tenant-id').value.trim();
     const clientSecret = document.getElementById('azure-client-secret').value.trim(); // Get secret
     const redirectUri = document.getElementById('azure-redirect-uri').value.trim(); // Get redirect URI (though it's readonly now)
 
 
+    localStorage.setItem('timetagger_azure_auth_enabled', isEnabled);
     localStorage.setItem('timetagger_azure_client_id', clientId);
     localStorage.setItem('timetagger_azure_tenant_id', tenantId);
     localStorage.setItem('timetagger_azure_client_secret', clientSecret); // Save secret
@@ -66,7 +97,7 @@ function saveAzureConfig() {
     // localStorage.setItem('timetagger_azure_redirect_uri', redirectUri); 
 
 
-    console.log("Saved - ClientID:", clientId ? '***' : 'Empty', "TenantID:", tenantId ? '***' : 'Empty', "Secret:", clientSecret ? '***' : 'Empty');
+    console.log("Saved - Enabled:", isEnabled, "ClientID:", clientId ? '***' : 'Empty', "TenantID:", tenantId ? '***' : 'Empty', "Secret:", clientSecret ? '***' : 'Empty');
 
     
     const statusElement = document.getElementById('save-status');
@@ -78,24 +109,27 @@ function saveAzureConfig() {
      window.AZURE_TENANT_ID = tenantId;
      window.AZURE_CLIENT_SECRET = clientSecret;
      window.AZURE_REDIRECT_URI = redirectUri;
+     // We don't have a global window variable for enabled state, JS on login page will read directly from localStorage
 
 }
 
 function clearAzureConfig() {
      console.log("Clearing Azure config from localStorage...");
-     if (confirm("Are you sure you want to clear the Azure AD configuration?")) {
+     if (confirm("Are you sure you want to clear the Azure AD configuration and disable it?")) {
+         localStorage.removeItem('timetagger_azure_auth_enabled');
          localStorage.removeItem('timetagger_azure_client_id');
          localStorage.removeItem('timetagger_azure_tenant_id');
          localStorage.removeItem('timetagger_azure_client_secret');
          // localStorage.removeItem('timetagger_azure_redirect_uri');
          
-         // Clear input fields
+         // Clear input fields and checkbox
+         document.getElementById('azure-auth-enabled').checked = false;
          document.getElementById('azure-client-id').value = '';
          document.getElementById('azure-tenant-id').value = '';
          document.getElementById('azure-client-secret').value = '';
          
          const statusElement = document.getElementById('save-status');
-         statusElement.textContent = 'Configuration cleared!';
+         statusElement.textContent = 'Configuration cleared and Azure AD auth disabled!';
           setTimeout(() => { statusElement.textContent = ''; }, 3000);
           
          // Clear window variables
@@ -103,6 +137,8 @@ function clearAzureConfig() {
           window.AZURE_TENANT_ID = '';
           window.AZURE_CLIENT_SECRET = '';
           // Keep redirect URI as it's based on current host
+
+         toggleAzureFields(); // Update field states
      }
  }
 

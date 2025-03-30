@@ -27,25 +27,42 @@ window.AZURE_TENANT_ID = '{{ timetagger_azure_tenant_id }}';
 window.AZURE_REDIRECT_URI = '{{ timetagger_azure_redirect_uri }}';
 window.AZURE_CLIENT_SECRET = '{{ timetagger_azure_client_secret }}';
 
-// Initialize Azure AD configuration
+// Initialize Azure AD configuration by reading directly from localStorage
 const azureConfig = {
-    clientId: window.AZURE_CLIENT_ID,
-    tenantId: window.AZURE_TENANT_ID,
-    redirectUri: window.AZURE_REDIRECT_URI,
-    clientSecret: window.AZURE_CLIENT_SECRET,
+    // Read values from localStorage, providing empty strings as defaults
+    clientId: localStorage.getItem('timetagger_azure_client_id') || '',
+    tenantId: localStorage.getItem('timetagger_azure_tenant_id') || '',
+    clientSecret: localStorage.getItem('timetagger_azure_client_secret') || '',
+    // Dynamically construct the redirect URI based on the current page's origin
+    redirectUri: `${window.location.origin}/timetagger/auth/callback`, 
+    
+    // Authority and scope getters remain the same, relying on the properties above
     get authority() {
         if (!this.tenantId) {
-            throw new Error('Azure AD tenant ID is not configured');
+            // Don't throw error immediately, might just be disabled. Login fn will check.
+            console.warn('Azure AD tenant ID is not configured in localStorage.');
+            return ''; // Return empty or handle appropriately
         }
         return `https://login.microsoftonline.com/${this.tenantId}`;
     },
     get scope() {
         if (!this.clientId) {
-            throw new Error('Azure AD client ID is not configured');
+            // Don't throw error immediately. Login fn will check.
+            console.warn('Azure AD client ID is not configured in localStorage.');
+            return 'openid profile email'; // Minimal scope if client ID is missing
         }
-        return `openid profile email ${this.clientId}/.default`;
+        // Use backticks for template literal if needed, ensure correct variable name
+        return `openid profile email ${this.clientId}/.default`; 
     }
 };
+
+// Log the loaded config for debugging
+console.log("Azure Config Initialized:", {
+    clientId: azureConfig.clientId ? '***' : 'Empty',
+    tenantId: azureConfig.tenantId ? '***' : 'Empty',
+    clientSecret: azureConfig.clientSecret ? '***' : 'Empty',
+    redirectUri: azureConfig.redirectUri
+});
 
 // Azure AD auth handler
 class AzureAuthHandler {
@@ -336,14 +353,14 @@ window.addEventListener('load', async function() {
     try {
         if (statusEl) statusEl.textContent = 'Loading required scripts...';
         
-        // Define scripts to load with relative paths
+        // Define scripts to load with ABSOLUTE paths
         const scripts = [
-             './app/tools.js',
-             './app/utils.js',
-             './app/dt.js',
-             './app/stores.js',
-             './app/dialogs.js',
-             './app/front.js'
+             '/timetagger/app/tools.js',
+             '/timetagger/app/utils.js',
+             '/timetagger/app/dt.js',
+             '/timetagger/app/stores.js',
+             '/timetagger/app/dialogs.js',
+             '/timetagger/app/front.js'
         ];
         
         // Load scripts first
@@ -381,9 +398,6 @@ window.addEventListener('load', async function() {
             if (statusEl) statusEl.textContent = 'Ready to login';
             if (loginButton) loginButton.disabled = false;
         }
-        
-        // Check token status *after* potential callback processing
-        checkTokenStatus();
         
     } catch (error) {
         console.error('Initialization failed:', error);
@@ -442,7 +456,7 @@ async function waitForScripts() {
     }
 }
 
-// Function to check token status
+// Function to check token status - KEPT FOR NOW, BUT NOT CALLED ON LOAD
 function checkTokenStatus() {
     console.log('Checking token status...');
     
@@ -732,7 +746,7 @@ async function handleCredentialLogin() {
 // --- Azure AD Handling (Initialization and Callback) ---
 const azureAuthHandler = new AzureAuthHandler(azureConfig);
 
-// Check for Azure AD callback parameters
+// Check for Azure AD callback parameters AND AZURE ENABLED STATUS
 window.addEventListener('load', () => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
@@ -740,22 +754,43 @@ window.addEventListener('load', () => {
     const error = params.get('error');
     const errorDescription = params.get('error_description');
 
-    if (error) {
-        console.error(`Azure AD Error: ${error} - ${errorDescription}`);
-        updateStatus(`Azure AD login failed: ${errorDescription || error}`, 'error');
-    } else if (code && state) {
-        // Handle the callback if code and state are present
-        updateStatus('Processing Azure AD login...');
-        azureAuthHandler.handleCallback(code, state);
+    // Check Azure Enabled status first
+    const azureAuthEnabled = localStorage.getItem('timetagger_azure_auth_enabled') === 'true';
+    const azureLoginSection = document.getElementById('azure-login');
+    const azureLoginButton = document.getElementById('azure-login-button'); // Keep reference if needed elsewhere
+
+    if (!azureAuthEnabled) {
+        if (azureLoginSection) {
+            azureLoginSection.style.display = 'none';
+            console.log("Azure AD auth is disabled in config, hiding Azure login option.");
+        }
     } else {
-        console.log("No Azure AD callback detected, showing login form.");
-        // Optionally hide/show login sections based on config availability
-        const azureLoginButton = document.getElementById('azure-login-button');
-        const azureLoginSection = document.getElementById('azure-login');
-        if (!azureConfig.clientId || !azureConfig.tenantId) {
-            if (azureLoginButton) azureLoginButton.style.display = 'none';
-            if (azureLoginSection) azureLoginSection.innerHTML = '<p>Azure AD login is not configured.</p>';
-            console.log("Azure AD config missing, hiding Azure login option.");
+        // Azure Auth is enabled, proceed with checks for config and callback
+        console.log("Azure AD auth is enabled in config.");
+        if (azureLoginSection) {
+            azureLoginSection.style.display = 'block'; // Ensure it's visible if enabled
+        }
+
+        if (error) {
+            console.error(`Azure AD Error: ${error} - ${errorDescription}`);
+            updateStatus(`Azure AD login failed: ${errorDescription || error}`, 'error');
+        } else if (code && state) {
+            // Handle the callback if code and state are present
+            updateStatus('Processing Azure AD login...');
+            azureAuthHandler.handleCallback(code, state);
+        } else {
+            console.log("No Azure AD callback detected, showing login form.");
+            // Check if config details are present (only if enabled)
+            if (!azureConfig.clientId || !azureConfig.tenantId) {
+                if (azureLoginSection) {
+                     // Modify the message instead of hiding the button if enabled but not configured
+                    azureLoginSection.innerHTML = '<p>Azure AD login is enabled but not fully configured (missing Client/Tenant ID).</p>';
+                }
+                console.warn("Azure AD config missing Client/Tenant ID, showing warning.");
+            } else {
+                 console.log("Azure AD enabled and configured.");
+                 // Button is already visible due to display = 'block' above
+            }
         }
     }
     
