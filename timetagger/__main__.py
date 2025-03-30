@@ -76,50 +76,61 @@ web_assets = dict(**common_assets, **image_assets, **page_assets)
 # Enable the service worker so the app can be used offline and is installable
 enable_service_worker(app_assets)
 
-# Turn asset dicts into handlers. This feature of Asgineer provides
-# lightning fast handlers that support compression and HTTP caching.
-app_asset_handler = asgineer.utils.make_asset_handler(app_assets, max_age=0)
-web_asset_handler = asgineer.utils.make_asset_handler(web_assets, max_age=0)
+# Turn asset dicts into handlers with proper caching
+app_asset_handler = asgineer.utils.make_asset_handler(
+    app_assets,
+    max_age=3600  # 1 hour cache
+)
+web_asset_handler = asgineer.utils.make_asset_handler(
+    web_assets,
+    max_age=3600  # 1 hour cache
+)
 
 
 @asgineer.to_asgi
 async def main_handler(request):
-    """
-    The main handler where we delegate to the API or asset handler.
-    The root path redirects directly to the app.
-    """
-    print(f"Main handler received request for path: {request.path}, method: {request.method}")
-    logger.info(f"Main handler received request for path: {request.path}, method: {request.method}")
+    """Main handler that serves the TimeTagger UI."""
 
-    if request.path == "/" or request.path == "/timetagger/":
-        return 307, {"Location": "/timetagger/app/"}, b""  # Always redirect to app
+    path = request.path.strip("/")
+    
+    # Strip the timetagger prefix if present
+    if path.startswith("timetagger/"):
+        path = path[len("timetagger/"):]
 
-    elif request.path.startswith("/timetagger/"):
-        if request.path == "/timetagger/status":
-            return 200, {}, "ok"
-        elif request.path.startswith("/timetagger/api/v2/"):
-            path = request.path[19:].strip("/")
-            print(f"Delegating to API handler with path: {path}")
-            logger.info(f"Delegating to API handler with path: {path}")
-            return await api_handler(request, path)
-        elif request.path.startswith("/timetagger/app/"):
-            path = request.path[16:].strip("/")
-            return await app_asset_handler(request, path)
-        else:
-            path = request.path[12:].strip("/")
-            # For page assets, prepare template context
-            if path == "login": # or maybe check for .md extension?
-                template_context = {
-                    "timetagger_azure_client_id": os.environ.get("TIMETAGGER_AZURE_CLIENT_ID", ""),
-                    "timetagger_azure_tenant_id": os.environ.get("TIMETAGGER_AZURE_TENANT_ID", ""),
-                    "timetagger_azure_client_secret": os.environ.get("TIMETAGGER_AZURE_CLIENT_SECRET", "")
-                }
-                print(f"Rendering {path} with context: {template_context}")
-                logger.info(f"Rendering {path} with context keys: {list(template_context.keys())}")
-            return await web_asset_handler(request, path)
+    # Special handling for service worker
+    if path == "sw.js":
+        return await app_asset_handler(request, path)
 
-    else:
-        return 404, {}, "only serving at /timetagger/"
+    # Redirect root and home to app
+    if not path or path == "home":
+        return 307, {"Location": "/timetagger/app/"}, "Redirecting to app..."
+
+    # Handle app path and app assets
+    if path == "app" or path == "app/":
+        return await app_asset_handler(request, "_template.html")
+    elif path.startswith("app/"):
+        return await app_asset_handler(request, path[4:])
+
+    # Handle API requests
+    if path.startswith("api/v2/"):
+        api_path = path[len("api/v2/"):]
+        return await api_handler(request, api_path)
+
+    # Handle login, account, and auth callback paths
+    if path in ["login", "auth/callback", "account"]:
+        template_context = {
+            'timetagger_azure_client_id': os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
+            'timetagger_azure_tenant_id': os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
+            'timetagger_azure_redirect_uri': os.environ.get('TIMETAGGER_AZURE_REDIRECT_URI', ''),
+            'timetagger_azure_client_secret': os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
+        }
+        # For callback, use login page
+        if path == "auth/callback":
+            path = "login"
+        return await pages_handler(request, path, template_context)
+
+    # Handle all other paths with web assets
+    return await web_asset_handler(request, path)
 
 
 async def api_handler(request, path):
@@ -335,24 +346,8 @@ async def get_webtoken_proxy(request, auth_info):
 
 
 async def get_webtoken_usernamepassword(request, auth_info):
-    """An authentication handler to exchange credentials for a webtoken.
-    The credentials are set via the config and are intended to support
-    a handful of users. See `get_webtoken_unsafe()` for details.
-    """
-    # This approach uses bcrypt to hash the passwords with a salt,
-    # and is therefore much safer than e.g. BasicAuth.
-
-    # Get credentials from request
-    user = auth_info.get("username", "").strip()
-    pw = auth_info.get("password", "").strip()
-    # Get hash for this user
-    hash = CREDENTIALS.get(user, "")
-    # Check
-    if user and hash and bcrypt.checkpw(pw.encode(), hash.encode()):
-        token = await get_webtoken_unsafe(user)
-        return 200, {}, dict(token=token)
-    else:
-        return 403, {}, "Invalid credentials"
+    """Disabled local login handler."""
+    return 403, {}, "Local login is disabled. Please use Azure AD authentication."
 
 
 async def get_webtoken_localhost(request, auth_info):
@@ -503,6 +498,24 @@ async def token_exchange_handler(request):
         print(f"Error in token_exchange_handler: {str(e)}")
         logger.error(f"Error in token_exchange_handler: {str(e)}")
         return 500, {"Content-Type": "application/json"}, {"error": f"Internal server error: {str(e)}"}
+
+
+async def pages_handler(request, path, template_context):
+    """Handle markdown page rendering with template context."""
+    try:
+        from timetagger.server._assets import md2html
+        from importlib import resources
+        
+        # Read the markdown file
+        md_content = resources.files("timetagger.pages").joinpath(f"{path}.md").read_text()
+        
+        # Render with template context
+        html_content = md2html(md_content, template_context)
+        
+        return 200, {"content-type": "text/html"}, html_content
+    except Exception as e:
+        logger.error(f"Error rendering template: {e}")
+        return 500, {}, f"Error rendering template: {e}"
 
 
 if __name__ == "__main__":

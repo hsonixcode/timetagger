@@ -60,12 +60,21 @@ def md2html(text, template):
     assert '"' not in description
     
     # Process template variables in the text first
-    if isinstance(template, str):
-        template = jinja2.Template(template)
-    text = jinja2.Template(text).render(
-        timetagger_azure_client_id=os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
-        timetagger_azure_tenant_id=os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
-        timetagger_azure_client_secret=os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
+    if isinstance(template, dict):
+        # If template is a dict, create a new Template from default_template
+        template_obj = jinja2.Template(default_template)
+    elif isinstance(template, str):
+        template_obj = jinja2.Template(template)
+    else:
+        template_obj = template
+    
+    # Create text template and render with context
+    text_template = jinja2.Template(text)
+    text = text_template.render(
+        timetagger_azure_client_id=template.get('timetagger_azure_client_id', '') if isinstance(template, dict) else '',
+        timetagger_azure_tenant_id=template.get('timetagger_azure_tenant_id', '') if isinstance(template, dict) else '',
+        timetagger_azure_client_secret=template.get('timetagger_azure_client_secret', '') if isinstance(template, dict) else '',
+        timetagger_azure_redirect_uri=template.get('timetagger_azure_redirect_uri', '') if isinstance(template, dict) else ''
     )
     
     # Convert font-awesome codepoints to Unicode chars
@@ -89,16 +98,18 @@ def md2html(text, template):
     # Turn md into html and store
     main = markdown.markdown(text, extensions=["fenced_code"])
 
-    return template.render(
+    # Render final template with all variables
+    return template_obj.render(
         title=title,
         description=description,
         main=main,
         embedded_script="",
         embedded_style=style_embed,
         versionstring=versionstring,
-        timetagger_azure_client_id=os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
-        timetagger_azure_tenant_id=os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
-        timetagger_azure_client_secret=os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
+        timetagger_azure_client_id=template.get('timetagger_azure_client_id', '') if isinstance(template, dict) else '',
+        timetagger_azure_tenant_id=template.get('timetagger_azure_tenant_id', '') if isinstance(template, dict) else '',
+        timetagger_azure_client_secret=template.get('timetagger_azure_client_secret', '') if isinstance(template, dict) else '',
+        timetagger_azure_redirect_uri=template.get('timetagger_azure_redirect_uri', '') if isinstance(template, dict) else ''
     )
 
 
@@ -145,7 +156,8 @@ def create_assets_from_dir(dirname, template=None):
             ]
             exports.sort()  # important to produce reproducable assets
             jscode = pscript.create_js_module(name, jscode, [], exports, "simple")
-            assets[fname[:-2] + "js"] = jscode.encode()
+            # Store as string, not bytes
+            assets[fname[:-2] + "js"] = jscode
             logger.info(f"Compiled pscript from {fname}")
         elif fname.endswith((".txt", ".js", ".css", ".json")):
             # Text assets

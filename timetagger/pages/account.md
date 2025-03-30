@@ -24,15 +24,42 @@ async function refresh_auth_status() {
 
     if (auth) {
         let html = "Logged in as <b>" + auth.username + "</b>";
-        // Decode the JWT token to get expiration
-        const tokenParts = auth.token.split('.');
-        const tokenPayload = JSON.parse(window.atob(tokenParts[1]));
-        const expiresDate = new Date(tokenPayload.exp * 1000);
-        const expiresStr = expiresDate.toLocaleString();
-        
-        html += "<br><span class='token-status'>Web Token Status:</span>";
-        html += "<br>✓ Valid until: " + expiresStr;
-        html += "<br>✓ Seed: " + tokenPayload.seed;
+        try {
+            // Decode the JWT token to get expiration
+            const tokenParts = auth.token.split('.');
+            console.log('Token parts:', tokenParts);
+            
+            // Base64 decode and parse the payload
+            const base64Payload = tokenParts[1];
+            console.log('Base64 payload:', base64Payload);
+            
+            const decodedPayload = atob(base64Payload);
+            console.log('Decoded payload:', decodedPayload);
+            
+            const tokenPayload = JSON.parse(decodedPayload);
+            console.log('Parsed token payload:', tokenPayload);
+            
+            // Convert Unix timestamp (seconds) to milliseconds for Date object
+            const expiresTimestamp = tokenPayload.expires;
+            console.log('Expires timestamp:', expiresTimestamp);
+            
+            const expiresDate = new Date(expiresTimestamp * 1000);
+            console.log('Expires date:', expiresDate);
+            
+            const expiresStr = expiresDate.toLocaleString();
+            console.log('Formatted expires string:', expiresStr);
+            
+            html += "<br><span class='token-status'>Web Token Status:</span>";
+            html += "<br>✓ Valid until: " + expiresStr;
+            html += "<br>✓ Seed: " + tokenPayload.seed;
+        } catch (error) {
+            console.error('Error parsing token:', error);
+            html += "<br><span class='token-status'>Web Token Status:</span>";
+            html += "<br>✓ Valid (expiration date unavailable)";
+            if (tokenPayload && tokenPayload.seed) {
+                html += "<br>✓ Seed: " + tokenPayload.seed;
+            }
+        }
         
         el.innerHTML = html;
         logoutallbutton.disabled = false;
