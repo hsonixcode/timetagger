@@ -59,10 +59,10 @@ if __name__ == "__main__" and len(sys.argv) >= 2:
 logger = logging.getLogger(__name__) # Use current module name for logger
 
 # Get sets of assets provided by TimeTagger
-common_assets = create_assets_from_dir(resources.files("timetagger.common"))
-apponly_assets = create_assets_from_dir(resources.files("timetagger.app"))
-image_assets = create_assets_from_dir(resources.files("timetagger.images"))
-page_assets = create_assets_from_dir(resources.files("timetagger.pages"))
+common_assets = create_assets_from_dir("timetagger.common")
+apponly_assets = create_assets_from_dir("timetagger.app")
+image_assets = create_assets_from_dir("timetagger.images")
+page_assets = create_assets_from_dir("timetagger.pages")
 
 # Explicitly remove potentially problematic files if they exist
 if "index.md" in page_assets:
@@ -141,6 +141,135 @@ async def main_handler(request):
         logger.info(f"Serving service worker: {path}")
         return await app_asset_handler(request, path)
 
+    # Handle public API endpoints that don't require authentication
+    if path == "api/v2/public_auth_config":
+        from .server.config_api import get_public_auth_config
+        try:
+            config = get_public_auth_config()
+            return 200, {}, config
+        except Exception as e:
+            logger.error("public_auth_config.handler_error",
+                        error=str(e),
+                        error_type=type(e).__name__)
+            return 500, {"content-type": "application/json"}, {
+                "error": "Internal server error",
+                "details": str(e)
+            }
+            
+    # Handle token exchange endpoint
+    if path == "api/v2/token_exchange":
+        if request.method.upper() != "POST":
+            return 405, {"content-type": "application/json"}, {
+                "error": "Method not allowed",
+                "allowed_methods": ["POST"]
+            }
+        
+        try:
+            token_data = await request.get_json()
+            logger.info(f"Token exchange request data: {token_data}")
+            
+            # Get Azure config from database (use full config to get client secret)
+            from .server.config_api import get_full_app_config
+            # Create a mock admin auth_info to access full config
+            mock_admin_auth = {"is_admin": True}
+            azure_config = get_full_app_config(mock_admin_auth)
+            logger.info(f"Retrieved Azure config (excluding secret)")
+            
+            if not azure_config.get('azure_auth_enabled'):
+                logger.error("Azure AD authentication is not enabled")
+                return 403, {"content-type": "application/json"}, {
+                    "error": "Azure AD authentication is not enabled"
+                }
+            
+            # Validate required configuration
+            required_fields = ['azure_client_id', 'azure_tenant_id', 'azure_client_secret', 'azure_instance']
+            missing_fields = [field for field in required_fields if not azure_config.get(field)]
+            if missing_fields:
+                logger.error(f"Missing required Azure configuration: {missing_fields}")
+                return 500, {"content-type": "application/json"}, {
+                    "error": "Missing required Azure configuration",
+                    "details": f"Missing fields: {', '.join(missing_fields)}"
+                }
+            
+            # Prepare token request data
+            token_request = {
+                "client_id": azure_config['azure_client_id'],
+                "client_secret": azure_config['azure_client_secret'],
+                "code": token_data.get('code'),
+                "redirect_uri": azure_config['azure_redirect_uri'],
+                "grant_type": "authorization_code",
+                "scope": "openid profile email offline_access"
+            }
+            
+            # Log request details (excluding secret)
+            safe_log_data = token_request.copy()
+            safe_log_data['client_secret'] = '***'
+            logger.info(f"Token request data (safe): {safe_log_data}")
+            logger.info(f"Token request URL: {azure_config['azure_instance']}/{azure_config['azure_tenant_id']}/oauth2/v2.0/token")
+            
+            # Exchange code for tokens
+            async with httpx.AsyncClient() as client:
+                token_url = f"{azure_config['azure_instance']}/{azure_config['azure_tenant_id']}/oauth2/v2.0/token"
+                
+                try:
+                    response = await client.post(
+                        token_url,
+                        data=token_request,
+                        headers={"Content-Type": "application/x-www-form-urlencoded"}
+                    )
+                    
+                    # Log response details for debugging
+                    logger.info(f"Token exchange response status: {response.status_code}")
+                    logger.info(f"Token exchange response headers: {dict(response.headers)}")
+                    response_text = response.text
+                    logger.info(f"Token exchange response body: {response_text[:200]}")  # Log first 200 chars
+                    
+                    if response.status_code != 200:
+                        error_details = response_text
+                        try:
+                            error_json = response.json()
+                            if 'error_description' in error_json:
+                                error_details = error_json['error_description']
+                            elif 'error' in error_json:
+                                error_details = error_json['error']
+                        except:
+                            pass
+                        
+                        logger.error(f"Token exchange failed with status {response.status_code}: {error_details}")
+                        return response.status_code, {"content-type": "application/json"}, {
+                            "error": "Token exchange failed",
+                            "details": error_details
+                        }
+                    
+                    try:
+                        tokens = response.json()
+                        logger.info("Successfully parsed token response")
+                        return 200, {"content-type": "application/json"}, tokens
+                    except Exception as e:
+                        logger.error(f"Failed to parse token response as JSON: {str(e)}")
+                        return 500, {"content-type": "application/json"}, {
+                            "error": "Token exchange failed",
+                            "details": f"Failed to parse response as JSON: {str(e)}"
+                        }
+                        
+                except httpx.RequestError as e:
+                    logger.error(f"Request to Azure AD failed: {str(e)}")
+                    return 500, {"content-type": "application/json"}, {
+                        "error": "Token exchange failed",
+                        "details": f"Request to Azure AD failed: {str(e)}"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Token exchange error: {str(e)}")
+            return 500, {"content-type": "application/json"}, {
+                "error": "Token exchange failed",
+                "details": str(e)
+            }
+            
+    # Handle bootstrap authentication endpoint
+    if path == "api/v2/bootstrap_authentication":
+        return await get_webtoken(request)
+
     # Redirect root and home to app
     if not path or path == "home":
         logger.info(f"Redirecting root or home path: {path} to /timetagger/app/")
@@ -168,10 +297,22 @@ async def main_handler(request):
              logger.error("Could not find the pre-rendered index page ('') in app_assets!")
              return 404, {}, "Error: Application index page not found."
     elif path.startswith("app/"):
-        asset_path = path[4:]
+        asset_path = path[4:]  # Remove 'app/' prefix
         logger.info(f"Serving app asset for path: {path}, asset requested: {asset_path}")
-        # Use app_asset_handler, which uses the app_assets dictionary
-        return await app_asset_handler(request, asset_path)
+        
+        # First try the exact path
+        if asset_path in app_assets:
+            return await app_asset_handler(request, asset_path)
+            
+        # If not found and it's a .js file, try looking for just the filename
+        if '/' in asset_path and asset_path.endswith('.js'):
+            filename = asset_path.split('/')[-1]
+            if filename in app_assets:
+                logger.info(f"Found JavaScript file by filename: {filename}")
+                return await app_asset_handler(request, filename)
+        
+        logger.error(f"Asset not found: {asset_path}")
+        return 404, {}, f"Asset not found: {asset_path}"
 
     # Handle API requests
     if path.startswith("api/v2/"):
@@ -214,38 +355,48 @@ async def main_handler(request):
 
 async def api_handler(request, path):
     """The default API handler. Designed to be short, so that
-    applications that implement alternative authentication and/or have
-    more API endpoints can use this as a starting point.
+    the actual implementation can be changed easily.
     """
-    print(f"API handler called with path: '{path}' and method: {request.method}")
-    logger.info(f"API handler called with path: '{path}' and method: {request.method}")
-
-    # Some endpoints do not require authentication
-    if not path and request.method == "GET":
-        return 200, {}, "See https://timetagger.readthedocs.io"
-    elif path == "bootstrap_authentication":
-        # The client-side that requests these is in pages/login.md
-        print("Handling bootstrap_authentication request")
-        logger.info("Handling bootstrap_authentication request")
-        return await get_webtoken(request)
-    elif path == "token_exchange" and request.method == "POST":
-        # Token exchange endpoint is exempt from authentication
-        print("Handling token_exchange request")
-        logger.info("Handling token_exchange request")
-        return await token_exchange_handler(request)
-    elif path == "test_post" and request.method == "POST":
-        # Test endpoint is exempt from authentication
-        print("Handling test_post request")
-        logger.info("Handling test_post request")
+    
+    # Skip bootstrap_authentication as it's handled by main_handler
+    if path == "bootstrap_authentication":
+        return 404, {}, "Not found: endpoint moved to /api/v2/bootstrap_authentication"
+    
+    # Handle public endpoints
+    if path == "test_azure_config":
+        from .server.config_api import test_azure_config
         
-        # Get the request body
-        body = await request.get_body()
-        body_text = body.decode('utf-8') if isinstance(body, bytes) else body
+        if request.method.upper() != "POST":
+            return 405, {"content-type": "application/json"}, {
+                "error": "Method not allowed",
+                "allowed_methods": ["POST"]
+            }
         
-        # Return a simple response
-        return 200, {"Content-Type": "application/json"}, {"status": "success", "message": "POST request received", "body": body_text}
-
-    # Authenticate and get user db
+        if not request.headers.get("content-type", "").startswith("application/json"):
+            return 400, {"content-type": "application/json"}, {
+                "error": "Invalid content type",
+                "details": "Request must be application/json"
+            }
+        
+        try:
+            config_data = await request.get_json()
+            result = await test_azure_config(config_data)
+            return 200, {"content-type": "application/json"}, result
+        except ValueError as e:
+            return 400, {"content-type": "application/json"}, {
+                "error": "Invalid configuration",
+                "details": str(e)
+            }
+        except Exception as e:
+            logger.error("test_azure_config.handler_error",
+                        error=str(e),
+                        error_type=type(e).__name__)
+            return 500, {"content-type": "application/json"}, {
+                "error": "Internal server error",
+                "details": str(e)
+            }
+    
+    # Authenticate and get user db for protected endpoints
     try:
         auth_info, db = await authenticate(request)
         # Only validate if proxy auth is enabled
@@ -261,15 +412,112 @@ async def api_handler(request, path):
 
 
 async def api_handler_triage(request, path, auth_info, db):
-    """The handler that takes care of the actual API requests."""
+    """Handle API requests that require authentication."""
     
-    print(f"API triage handling path: {path}, method: {request.method}")
-    logger.debug(f"API triage handling path: {path}, method: {request.method}")
+    # Get the request method
+    method = request.method.upper()
     
-    # Delegate to the original api_handler_triage for all standard endpoints
-    print(f"Delegating to standard api_handler_triage for path: {path}")
-    logger.info(f"Delegating to standard api_handler_triage for path: {path}")
-    return await timetagger.server.api_handler_triage(request, path, auth_info, db)
+    # Handle Azure config endpoints
+    if path == "config/azure":
+        from .server.config_api import get_azure_config, update_azure_config
+        try:
+            if method == "GET":
+                config = get_azure_config(auth_info)
+                return 200, {"content-type": "application/json"}, config
+            elif method == "POST":
+                if not request.headers.get("content-type", "").startswith("application/json"):
+                    return 400, {"content-type": "application/json"}, {
+                        "error": "Invalid content type",
+                        "details": "Request must be application/json"
+                    }
+                try:
+                    new_config = await request.get_json()
+                    updated_config = update_azure_config(auth_info, new_config)
+                    return 200, {"content-type": "application/json"}, updated_config
+                except ValueError as e:
+                    return 400, {"content-type": "application/json"}, {
+                        "error": "Invalid configuration",
+                        "details": str(e)
+                    }
+            else:
+                return 405, {"content-type": "application/json"}, {
+                    "error": "Method not allowed",
+                    "allowed_methods": ["GET", "POST"]
+                }
+        except AuthException as e:
+            return 403, {"content-type": "application/json"}, {
+                "error": "Forbidden",
+                "details": str(e)
+            }
+        except Exception as e:
+            logger.error("azure_config.handler_error",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        user=auth_info.get('username'))
+            return 500, {"content-type": "application/json"}, {
+                "error": "Internal server error",
+                "details": str(e)
+            }
+    
+    # Handle config endpoints
+    if path == "app_config":
+        from .server.config_api import get_full_app_config, update_app_config
+        
+        try:
+            if method == "GET":
+                config = get_full_app_config(auth_info)
+                return 200, {}, config
+            elif method == "POST":
+                if not request.headers.get("content-type", "").startswith("application/json"):
+                    return 400, {"content-type": "application/json"}, {
+                        "error": "Invalid content type",
+                        "details": "Request must be application/json"
+                    }
+                
+                try:
+                    new_config = await request.get_json()
+                except ValueError as e:
+                    return 400, {"content-type": "application/json"}, {
+                        "error": "Invalid JSON",
+                        "details": str(e)
+                    }
+                
+                try:
+                    # Extract the actual config from the value field
+                    if isinstance(new_config, dict) and 'value' in new_config:
+                        config_value = new_config['value']
+                    else:
+                        config_value = new_config
+                    
+                    updated_config = update_app_config(auth_info, config_value)
+                    return 200, {"content-type": "application/json"}, updated_config
+                except ValueError as e:
+                    return 400, {"content-type": "application/json"}, {
+                        "error": "Invalid configuration",
+                        "details": str(e)
+                    }
+            else:
+                return 405, {"content-type": "application/json"}, {
+                    "error": "Method not allowed",
+                    "allowed_methods": ["GET", "POST"]
+                }
+        except AuthException as e:
+            return 403, {"content-type": "application/json"}, {
+                "error": "Forbidden",
+                "details": str(e)
+            }
+        except Exception as e:
+            logger.error("app_config.handler_error",
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        user=auth_info.get('username'))
+            return 500, {"content-type": "application/json"}, {
+                "error": "Internal server error",
+                "details": str(e)
+            }
+    
+    # Handle other existing endpoints
+    return await timetagger.server._apiserver.api_handler_triage(request, path, auth_info, db)
 
 
 async def get_webtoken(request):
@@ -327,10 +575,28 @@ async def get_webtoken_azure(request, auth_info):
     if username and access_token:
         logger.info(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
         print(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
-        # We have the username and token, so we can directly generate a TimeTagger token
-        token = await get_webtoken_unsafe(username)
-        logger.info("Successfully generated TimeTagger token")
-        print(f"[get_webtoken_azure] Generated token: {token[:10]}...")
+        
+        # Check if this is the first user (admin)
+        is_admin = False
+        if CREDENTIALS:
+            # If using credentials file, first user in credentials is admin
+            is_admin = username == list(CREDENTIALS.keys())[0]
+            logger.info(f"[get_webtoken_azure] Admin check based on credentials: {is_admin}")
+        else:
+            # If no credentials file, check if this is the first user in the database
+            try:
+                from timetagger.server._apiserver import get_all_usernames
+                usernames = await get_all_usernames()
+                is_admin = not usernames or username == usernames[0]
+                logger.info(f"[get_webtoken_azure] Admin check based on database: {is_admin}")
+            except Exception as e:
+                logger.error(f"[get_webtoken_azure] Error checking admin status: {e}")
+                is_admin = False
+        
+        # Generate TimeTagger token with proper admin status
+        token = await get_webtoken_unsafe(username, is_admin=is_admin)
+        logger.info(f"Successfully generated TimeTagger token (admin: {is_admin})")
+        print(f"[get_webtoken_azure] Generated token: {token[:10]}... (admin: {is_admin})")
         return 200, {}, dict(token=token)
     
     # If we don't have a username and access token, try the code flow (THIS PATH SHOULD NOT BE USED NORMALLY)
@@ -402,8 +668,8 @@ async def get_webtoken_azure(request, auth_info):
         logger.error(f"Failed to extract user info from token: {str(e)}")
         return 403, {}, f"forbidden: Failed to extract user info from token: {str(e)}"
 
-    # Return the webtoken for Azure AD user
-    token = await get_webtoken_unsafe(username)
+    # Return the webtoken for Azure AD user - Set is_admin to False
+    token = await get_webtoken_unsafe(username, is_admin=False)
     logger.info("Successfully generated TimeTagger token (via code flow)")
     print(f"[get_webtoken_azure] Generated token (via code flow): {token[:10]}...")
     return 200, {}, dict(token=token)
@@ -553,7 +819,7 @@ async def token_exchange_handler(request):
         
         if not azure_tenant_id or not azure_client_id:
             logger.error(f"Missing required Azure AD configuration: tenant_id={azure_tenant_id}, client_id={azure_client_id}")
-            return 500, {"Content-Type": "application/json"}, {"error": "Missing required Azure AD configuration"}
+            return 500, {"content-type": "application/json"}, {"error": "Missing required Azure AD configuration"}
         
         token_url = f"{azure_instance}/{azure_tenant_id}/oauth2/v2.0/token"
         
@@ -603,7 +869,7 @@ async def token_exchange_handler(request):
                 
                 # Return tokens to the client
                 print("Returning tokens to client")
-                return 200, {"Content-Type": "application/json"}, tokens
+                return 200, {"content-type": "application/json"}, tokens
         except Exception as e:
             print(f"Azure AD token exchange failed: {str(e)}")
             logger.error(f"Azure AD token exchange failed: {str(e)}")
@@ -612,11 +878,11 @@ async def token_exchange_handler(request):
                 print(f"Response body: {e.response.text}")
                 logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response body: {e.response.text}")
-            return 500, {"Content-Type": "application/json"}, {"error": f"Azure AD token exchange failed: {str(e)}"}
+            return 500, {"content-type": "application/json"}, {"error": f"Azure AD token exchange failed: {str(e)}"}
     except Exception as e:
         print(f"Error in token_exchange_handler: {str(e)}")
         logger.error(f"Error in token_exchange_handler: {str(e)}")
-        return 500, {"Content-Type": "application/json"}, {"error": f"Internal server error: {str(e)}"}
+        return 500, {"content-type": "application/json"}, {"error": f"Internal server error: {str(e)}"}
 
 
 async def pages_handler(request, path, template_context):

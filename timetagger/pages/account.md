@@ -24,41 +24,90 @@ async function refresh_auth_status() {
 
     if (auth) {
         let html = "Logged in as <b>" + auth.username + "</b>";
+        
+        // Check if logged in via Azure AD
+        const azureIdToken = localStorage.getItem("azure_id_token");
+        const azureAccessToken = localStorage.getItem("azure_access_token");
+        
+        if (azureIdToken) {
+            html += "<br><span class='token-status'>Azure AD Status:</span>";
+            try {
+                // Decode Azure ID token
+                const idTokenParts = azureIdToken.split('.');
+                if (idTokenParts.length !== 3) {
+                    throw new Error('Invalid Azure ID token format');
+                }
+                
+                let base64Payload = idTokenParts[1];
+                base64Payload = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
+                while (base64Payload.length % 4) {
+                    base64Payload += '=';
+                }
+                
+                const decodedPayload = atob(base64Payload);
+                const azurePayload = JSON.parse(decodedPayload);
+                
+                // Display Azure token information
+                if (azurePayload.exp) {
+                    const expiresDate = new Date(azurePayload.exp * 1000);
+                    html += "<br>✓ Azure token valid until: " + expiresDate.toLocaleString();
+                }
+                if (azurePayload.name) {
+                    html += "<br>✓ Name: " + azurePayload.name;
+                }
+                if (azurePayload.preferred_username) {
+                    html += "<br>✓ Email: " + azurePayload.preferred_username;
+                }
+                if (azurePayload.oid) {
+                    html += "<br>✓ Azure Object ID: " + azurePayload.oid;
+                }
+            } catch (error) {
+                console.error('Error parsing Azure token:', error);
+                html += "<br>✓ Azure AD authenticated (token details unavailable)";
+                html += "<br>✗ Error: " + error.message;
+            }
+        }
+        
+        // Display TimeTagger token information
         try {
             // Decode the JWT token to get expiration
             const tokenParts = auth.token.split('.');
-            console.log('Token parts:', tokenParts);
+            if (tokenParts.length !== 3) {
+                throw new Error('Invalid token format');
+            }
             
             // Base64 decode and parse the payload
-            const base64Payload = tokenParts[1];
-            console.log('Base64 payload:', base64Payload);
+            let base64Payload = tokenParts[1];
+            // Add padding if needed
+            base64Payload = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
+            while (base64Payload.length % 4) {
+                base64Payload += '=';
+            }
             
             const decodedPayload = atob(base64Payload);
-            console.log('Decoded payload:', decodedPayload);
-            
             const tokenPayload = JSON.parse(decodedPayload);
-            console.log('Parsed token payload:', tokenPayload);
             
-            // Convert Unix timestamp (seconds) to milliseconds for Date object
-            const expiresTimestamp = tokenPayload.expires;
-            console.log('Expires timestamp:', expiresTimestamp);
-            
-            const expiresDate = new Date(expiresTimestamp * 1000);
-            console.log('Expires date:', expiresDate);
-            
-            const expiresStr = expiresDate.toLocaleString();
-            console.log('Formatted expires string:', expiresStr);
-            
-            html += "<br><span class='token-status'>Web Token Status:</span>";
-            html += "<br>✓ Valid until: " + expiresStr;
-            html += "<br>✓ Seed: " + tokenPayload.seed;
-        } catch (error) {
-            console.error('Error parsing token:', error);
-            html += "<br><span class='token-status'>Web Token Status:</span>";
-            html += "<br>✓ Valid (expiration date unavailable)";
-            if (tokenPayload && tokenPayload.seed) {
+            html += "<br><span class='token-status'>TimeTagger Token Status:</span>";
+            if (tokenPayload.exp) {
+                const expiresDate = new Date(tokenPayload.exp * 1000);
+                html += "<br>✓ Valid until: " + expiresDate.toLocaleString();
+            }
+            if (tokenPayload.iat) {
+                const issuedDate = new Date(tokenPayload.iat * 1000);
+                html += "<br>✓ Issued at: " + issuedDate.toLocaleString();
+            }
+            if (tokenPayload.is_admin !== undefined) {
+                html += "<br>✓ Admin status: " + (tokenPayload.is_admin ? "Yes" : "No");
+            }
+            html += "<br>✓ Username: " + tokenPayload.username;
+            if (tokenPayload.seed) {
                 html += "<br>✓ Seed: " + tokenPayload.seed;
             }
+        } catch (error) {
+            console.error('Error parsing token:', error);
+            html += "<br><span class='token-status'>TimeTagger Token Status:</span>";
+            html += "<br>✓ Valid (token details unavailable)";
+            html += "<br>✗ Error: " + error.message;
         }
         
         el.innerHTML = html;

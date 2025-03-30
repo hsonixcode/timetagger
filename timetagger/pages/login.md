@@ -10,7 +10,7 @@
         <input type="text" id="username" name="username" style="width: 95%; padding: 8px; margin-bottom: 10px;"><br>
         <label for="password">Password:</label><br>
         <input type="password" id="password" name="password" style="width: 95%; padding: 8px; margin-bottom: 10px;"><br>
-        <button id="login-button" onclick="handleCredentialLogin()" style="padding: 10px 15px;">Login</button>
+        <button id="login-button" onclick="handleCredentialLogin(event)" style="padding: 10px 15px;">Login</button>
     </div>
 
     <div id="azure-login" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em;">
@@ -18,53 +18,28 @@
         <button id="azure-login-button" onclick="handleAzureLogin()" style="padding: 10px 15px;">Azure Active Directory</button> 
         <!-- Note: The handleAzureLogin function needs to be defined globally or attached correctly -->
     </div>
+
+    <div id="token-status" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em; font-size: 0.9em;">
+        <h3>Token Status</h3>
+        <div id="azure-token-status" style="margin-bottom: 1em;">
+            <strong>Azure AD Tokens:</strong><br>
+            <pre id="azure-token-details" style="white-space: pre-wrap; word-break: break-all;"></pre>
+        </div>
+        <div id="timetagger-token-status">
+            <strong>TimeTagger Token:</strong><br>
+            <pre id="timetagger-token-details" style="white-space: pre-wrap; word-break: break-all;"></pre>
+        </div>
+    </div>
 </div>
 
 <script>
-// Set Azure AD configuration variables
-window.AZURE_CLIENT_ID = '{{ timetagger_azure_client_id }}';
-window.AZURE_TENANT_ID = '{{ timetagger_azure_tenant_id }}';
-window.AZURE_REDIRECT_URI = '{{ timetagger_azure_redirect_uri }}';
-window.AZURE_CLIENT_SECRET = '{{ timetagger_azure_client_secret }}';
+// Remove placeholder window variables - config will come from API
+// window.AZURE_CLIENT_ID = '{{ timetagger_azure_client_id }}';
+// window.AZURE_TENANT_ID = '{{ timetagger_azure_tenant_id }}';
+// window.AZURE_REDIRECT_URI = '{{ timetagger_azure_redirect_uri }}';
+// window.AZURE_CLIENT_SECRET = '{{ timetagger_azure_client_secret }}';
 
-// Initialize Azure AD configuration by reading directly from localStorage
-const azureConfig = {
-    // Read values from localStorage, providing empty strings as defaults
-    clientId: localStorage.getItem('timetagger_azure_client_id') || '',
-    tenantId: localStorage.getItem('timetagger_azure_tenant_id') || '',
-    clientSecret: localStorage.getItem('timetagger_azure_client_secret') || '',
-    // Dynamically construct the redirect URI based on the current page's origin
-    redirectUri: `${window.location.origin}/timetagger/auth/callback`, 
-    
-    // Authority and scope getters remain the same, relying on the properties above
-    get authority() {
-        if (!this.tenantId) {
-            // Don't throw error immediately, might just be disabled. Login fn will check.
-            console.warn('Azure AD tenant ID is not configured in localStorage.');
-            return ''; // Return empty or handle appropriately
-        }
-        return `https://login.microsoftonline.com/${this.tenantId}`;
-    },
-    get scope() {
-        if (!this.clientId) {
-            // Don't throw error immediately. Login fn will check.
-            console.warn('Azure AD client ID is not configured in localStorage.');
-            return 'openid profile email'; // Minimal scope if client ID is missing
-        }
-        // Use backticks for template literal if needed, ensure correct variable name
-        return `openid profile email ${this.clientId}/.default`; 
-    }
-};
-
-// Log the loaded config for debugging
-console.log("Azure Config Initialized:", {
-    clientId: azureConfig.clientId ? '***' : 'Empty',
-    tenantId: azureConfig.tenantId ? '***' : 'Empty',
-    clientSecret: azureConfig.clientSecret ? '***' : 'Empty',
-    redirectUri: azureConfig.redirectUri
-});
-
-// Azure AD auth handler
+// Azure AD auth handler class definition - MOVED TO TOP
 class AzureAuthHandler {
     constructor(config) {
         this.config = config;
@@ -78,9 +53,6 @@ class AzureAuthHandler {
             }
             if (!this.config.tenantId) {
                 throw new Error('Azure AD tenant ID is not configured');
-            }
-            if (!this.config.clientSecret) {
-                console.warn('Azure AD client secret is missing - this may cause authentication to fail');
             }
             
             // Store the original page URL
@@ -109,31 +81,50 @@ class AzureAuthHandler {
             
         } catch (error) {
             console.error("Azure AD login failed:", error);
-            this.updateStatus('Azure AD login failed: ' + error.message, 'error');
+            updateStatus('Azure AD login failed: ' + error.message, 'error');
             throw error;
         }
     }
     
     async handleCallback(code, state) {
-        console.log("Processing authorization code");
+        console.log("Processing authorization code with state validation");
         
         // Check if the state matches
         const storedState = localStorage.getItem('azure_auth_state');
+        console.log("State validation:", {
+            receivedState: state,
+            storedState: storedState,
+            matches: state === storedState,
+            hasStoredState: !!storedState
+        });
         
         if (!code || !state) {
-            console.error("handleCallback called without code or state argument");
+            console.error("handleCallback called without code or state argument", {
+                hasCode: !!code,
+                hasState: !!state
+            });
             this.updateStatus('Azure AD authentication failed - missing params', 'error');
             return;
         }
         
         if (state !== storedState) {
-            console.error("State mismatch - possible CSRF attack");
+            console.error("State mismatch - possible CSRF attack", {
+                receivedState: state,
+                storedState: storedState
+            });
             this.updateStatus('Azure AD authentication failed - state mismatch', 'error');
             return;
         }
         
         try {
-            console.log("Preparing to exchange code for tokens");
+            console.log("Preparing to exchange code for tokens", {
+                redirectUri: this.config.redirectUri,
+                clientId: this.config.clientId,
+                hasClientSecret: !!this.config.clientSecret,
+                scope: this.config.scope,
+                authority: this.config.authority
+            });
+            
             const tokenData = {
                 code: code,
                 redirect_uri: this.config.redirectUri,
@@ -143,7 +134,13 @@ class AzureAuthHandler {
                 grant_type: 'authorization_code'
             };
             
+            console.log("Token exchange request payload:", {
+                ...tokenData,
+                client_secret: '[REDACTED]'
+            });
+            
             try {
+                console.log("Sending token exchange request to:", '/timetagger/api/v2/token_exchange');
                 const response = await fetch('/timetagger/api/v2/token_exchange', {
                     method: 'POST',
                     headers: {
@@ -152,26 +149,43 @@ class AzureAuthHandler {
                     body: JSON.stringify(tokenData)
                 });
                 
+                console.log("Token exchange response:", {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: Object.fromEntries(response.headers)
+                });
+                
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error(`Token exchange failed: ${errorText}`);
+                    console.error("Token exchange failed:", {
+                        status: response.status,
+                        statusText: response.statusText,
+                        error: errorText
+                    });
                     this.updateStatus('Azure AD authentication failed - token exchange error', 'error');
                     return;
                 }
                 
                 const tokens = await response.json();
-                console.log("Token exchange successful");
+                console.log("Token exchange successful", {
+                    hasAccessToken: !!tokens.access_token,
+                    hasIdToken: !!tokens.id_token,
+                    hasRefreshToken: !!tokens.refresh_token,
+                    expiresIn: tokens.expires_in
+                });
                 
                 // Process and store tokens
                 await this.processTokens(tokens);
                 
             } catch (error) {
-                console.error('Error during fetch:', error);
+                console.error('Error during token exchange:', error);
                 this.updateStatus('Azure AD authentication failed - error during token exchange', 'error');
+                throw error;
             }
         } catch (error) {
-            console.error('Error during callback:', error);
+            console.error('Error during callback processing:', error);
             this.updateStatus('Azure AD authentication failed - error during token exchange', 'error');
+            throw error;
         }
     }
 
@@ -196,6 +210,9 @@ class AzureAuthHandler {
                 const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
                 const padded = base64 + '==='.slice(0, (4 - base64.length % 4) % 4);
                 const payload = JSON.parse(atob(padded));
+                
+                // Update token status
+                await validateTokens();
                 
                 // Use the username from the ID token for TimeTagger authentication
                 if (payload.preferred_username || payload.email) {
@@ -227,20 +244,6 @@ class AzureAuthHandler {
         
         // Clean up state after successful authentication
         localStorage.removeItem('azure_auth_state');
-        
-        // Update token status
-        checkTokenStatus();
-        
-        // Redirect to original page if available
-        const originalPage = localStorage.getItem('azure_original_page');
-        if (originalPage) {
-            console.log(`Redirecting to original page: ${originalPage}`);
-            localStorage.removeItem('azure_original_page');
-            window.location.href = originalPage;
-        } else {
-            console.log('No original page found, redirecting to app page');
-            window.location.href = '/timetagger/app/';
-        }
     }
 
     // Authenticate with TimeTagger using username from Azure AD
@@ -286,10 +289,18 @@ class AzureAuthHandler {
                     // Update status and redirect
                     this.updateStatus('Authentication successful, redirecting...', 'success');
                     
+                    // Get the original page URL or default to the app page
+                    const originalPage = localStorage.getItem('azure_original_page') || '/timetagger/app/';
+                    console.log(`Will redirect to: ${originalPage}`);
+                    
+                    // Clean up the original page from storage
+                    localStorage.removeItem('azure_original_page');
+                    
                     // Short delay to ensure token is stored and status is shown
                     setTimeout(() => {
-                        window.location.href = '/timetagger/app/';
-                    }, 500);
+                        console.log('Redirecting to:', originalPage);
+                        window.location.href = originalPage;
+                    }, 1000);
                 } else {
                     console.error('tools.set_auth_info_from_token not available');
                     this.updateStatus('Error storing authentication token', 'error');
@@ -326,86 +337,200 @@ class AzureAuthHandler {
     }
 }
 
-// Initialize Azure AD auth handler
-const azureAuth = new AzureAuthHandler(azureConfig);
+// Single azureConfig declaration with empty initial values
+const azureConfig = {
+    clientId: '',
+    tenantId: '',
+    redirectUri: '', // Will be set from backend config
+    
+    get authority() {
+        if (!this.tenantId) {
+            console.warn('Azure AD tenant ID is not configured.');
+            return '';
+        }
+        return `https://login.microsoftonline.com/${this.tenantId}`;
+    },
+    get scope() {
+        if (!this.clientId) {
+            console.warn('Azure AD client ID is not configured.');
+            return 'openid profile email';
+        }
+        return `openid profile email ${this.clientId}/.default`;
+    }
+};
 
-// Log URL immediately on script start, before 'load' event
-console.log("[EARLY LOG] Initial window.location.href:", window.location.href);
+// Azure AD auth handler - instantiate with initial empty config
+const azureAuthHandler = new AzureAuthHandler(azureConfig);
 
-// --- Immediate check for callback mode ---
-const urlParams = new URLSearchParams(window.location.search);
-const initialCode = urlParams.get('code');
-const initialState = urlParams.get('state');
-const isInCallbackMode = !!initialCode && !!initialState;
-
-if (isInCallbackMode) {
-    console.log("[IMMEDIATE CHECK] Determined to be in callback mode.");
-} else {
-    console.log("[IMMEDIATE CHECK] Determined NOT to be in callback mode.");
-}
-// --- End immediate check ---
+// Log the initial (empty) config state
+console.log("Azure Config Initial Structure:", azureConfig);
 
 // Initialize on page load
 window.addEventListener('load', async function() {
-    const statusEl = document.getElementById('status');
-    const loginButton = document.querySelector('button');
-    
+    const statusEl = document.getElementById('login-status');
+    const credentialLoginButton = document.getElementById('login-button');
+    const azureLoginSection = document.getElementById('azure-login');
+    const azureLoginButton = document.getElementById('azure-login-button');
+
+    // Hide Azure section initially
+    if(azureLoginSection) azureLoginSection.style.display = 'none';
+
     try {
-        if (statusEl) statusEl.textContent = 'Loading required scripts...';
+        if (statusEl) statusEl.textContent = 'Loading scripts and configuration...';
         
-        // Define scripts to load with ABSOLUTE paths
-        const scripts = [
-             '/timetagger/app/tools.js',
-             '/timetagger/app/utils.js',
-             '/timetagger/app/dt.js',
-             '/timetagger/app/stores.js',
-             '/timetagger/app/dialogs.js',
-             '/timetagger/app/front.js'
-        ];
-        
-        // Load scripts first
-        await loadScriptSequentially(scripts);
+        // Load required scripts first
+        await loadScriptSequentially([
+            '/timetagger/app/tools.js',       
+            '/timetagger/app/utils.js',      
+            '/timetagger/app/dt.js',         
+            '/timetagger/app/stores.js',     
+            '/timetagger/app/dialogs.js',    
+            '/timetagger/app/front.js'       
+        ]);
 
-        // Wait for scripts (especially tools.js) to initialize
+        // Wait for scripts to initialize
         if (statusEl) statusEl.textContent = 'Initializing tools...';
-        await waitForScripts(); 
+        await waitForScripts();
 
-        // --- Now that scripts are loaded, proceed with auth logic --- 
+        // Fetch public auth config from our new API endpoint
+        if (statusEl) statusEl.textContent = 'Fetching authentication configuration...';
+        try {
+            const response = await fetch('/timetagger/api/v2/public_auth_config');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch auth config: ${response.status} ${await response.text()}`);
+            }
+            
+            const publicAuthConfig = await response.json();
+            console.log("Public Auth Config fetched:", publicAuthConfig);
+            
+            // Update azureConfig with values from the API
+            if (publicAuthConfig.azure_auth_enabled) {
+                azureConfig.clientId = publicAuthConfig.azure_client_id;
+                azureConfig.tenantId = publicAuthConfig.azure_tenant_id;
+                azureConfig.redirectUri = publicAuthConfig.azure_redirect_uri;
+                
+                // Update UI for Azure login
+                if (azureLoginSection) {
+                    if (azureConfig.clientId && azureConfig.tenantId && azureConfig.redirectUri) {
+                        azureLoginSection.style.display = 'block';
+                        if (azureLoginButton) azureLoginButton.disabled = false;
+                        console.log('Azure AD login enabled with config:', {
+                            clientId: azureConfig.clientId,
+                            tenantId: azureConfig.tenantId,
+                            redirectUri: azureConfig.redirectUri
+                        });
+                    } else {
+                        console.warn('Azure AD is enabled but configuration is incomplete:', publicAuthConfig);
+                        azureLoginSection.innerHTML = '<p>Azure AD login is enabled but not fully configured.</p>';
+                        azureLoginSection.style.display = 'block';
+                    }
+                }
+            } else {
+                console.log("Azure AD auth is disabled via backend config.");
+                if (azureLoginSection) azureLoginSection.style.display = 'none';
+            }
+            
+            if (statusEl) {
+                statusEl.textContent = 'Configuration loaded successfully';
+                setTimeout(() => { 
+                    if (statusEl.textContent === 'Configuration loaded successfully') 
+                        statusEl.textContent = ''; 
+                }, 2000);
+            }
+            
+        } catch (error) {
+            console.error('Error fetching auth config:', error);
+            if (statusEl) statusEl.textContent = `Failed to load auth configuration: ${error.message}`;
+            if (azureLoginSection) azureLoginSection.style.display = 'none';
+        }
 
-        // Setup global login handler (needs AzureAuthHandler class)
+        // --- Setup global login handlers --- 
         window.handleAzureLogin = async function() {
+            if (!azureConfig.clientId || !azureConfig.tenantId) {
+                 alert("Azure AD is not configured correctly.");
+                 return;
+            }
             try {
-                // Use the globally defined azureAuth instance
-                await azureAuth.login(); 
+                // Use the globally defined azureAuthHandler instance (which now has updated config)
+                await azureAuthHandler.login(); 
             } catch (error) {
                 console.error('Login failed:', error);
                 alert(`Login failed: ${error.message}`);
             }
         };
 
-        // Check if we determined we are in callback mode earlier
-        if (isInCallbackMode) {
-            // We have an auth code and state, we're in the callback process
-            console.log("Processing callback based on immediate check.");
-            if (statusEl) statusEl.textContent = 'Processing Azure AD login...';
-            if (loginButton) loginButton.disabled = true;
-            
-            // Process callback - PASS initialCode and initialState
-            await azureAuth.handleCallback(initialCode, initialState); 
+        // --- Handle potential Azure callback --- 
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialCode = urlParams.get('code');
+        const initialState = urlParams.get('state');
+        const error = urlParams.get('error');
+        const errorDescription = urlParams.get('error_description');
+
+        console.log("Checking for Azure AD callback parameters:", {
+            hasCode: !!initialCode,
+            hasState: !!initialState,
+            error,
+            errorDescription,
+            currentConfig: {
+                clientId: azureConfig.clientId,
+                tenantId: azureConfig.tenantId,
+                redirectUri: azureConfig.redirectUri,
+                authority: azureConfig.authority,
+                scope: azureConfig.scope
+            }
+        });
+
+        if (error) {
+            console.error(`Azure AD Callback Error: ${error} - ${errorDescription}`);
+            updateStatus(`Azure AD login failed: ${errorDescription || error}`, 'error');
+        } else if (initialCode && initialState) {
+            // Only handle callback if Azure AD is enabled according to public config
+            if (publicAuthConfig?.azure_auth_enabled && azureConfig.clientId && azureConfig.tenantId) {
+                console.log("Processing Azure AD callback with config:", {
+                    clientId: azureConfig.clientId,
+                    tenantId: azureConfig.tenantId,
+                    redirectUri: azureConfig.redirectUri,
+                    authority: azureConfig.authority
+                });
+                
+                if (statusEl) statusEl.textContent = 'Processing Azure AD login...';
+                if (azureLoginButton) azureLoginButton.disabled = true;
+                if (credentialLoginButton) credentialLoginButton.disabled = true;
+                
+                try {
+                    // Process callback - handler uses updated azureConfig
+                    await azureAuthHandler.handleCallback(initialCode, initialState);
+                } catch (error) {
+                    console.error("Error during Azure AD callback processing:", error);
+                    if (statusEl) statusEl.textContent = `Azure AD login failed: ${error.message}`;
+                    // Re-enable buttons on error
+                    if (azureLoginButton) azureLoginButton.disabled = false;
+                    if (credentialLoginButton) credentialLoginButton.disabled = false;
+                }
+            } else {
+                console.warn("Callback detected but Azure AD is not properly configured:", {
+                    enabled: publicAuthConfig?.azure_auth_enabled,
+                    hasClientId: !!azureConfig.clientId,
+                    hasTenantId: !!azureConfig.tenantId,
+                    config: azureConfig
+                });
+                updateStatus("Login callback ignored; Azure AD not properly configured.", "error");
+            }
         } else {
-            // Not in a callback state, enable login button
-            console.log("Not in callback mode (based on immediate check).");
-            if (statusEl) statusEl.textContent = 'Ready to login';
-            if (loginButton) loginButton.disabled = false;
+            // Not in a callback state, enable buttons if needed
+            console.log("Not in callback mode.");
+            if (credentialLoginButton) credentialLoginButton.disabled = false;
+            // Azure button enablement is handled above based on publicAuthConfig
         }
-        
+
     } catch (error) {
         console.error('Initialization failed:', error);
         if (statusEl) {
             statusEl.textContent = `Failed to initialize: ${error.message}. Please check console.`;
         }
-        // Ensure button is usable if init fails
-        if (loginButton) loginButton.disabled = false; 
+        // Ensure buttons are usable if init fails
+        if (credentialLoginButton) credentialLoginButton.disabled = false; 
+        if (azureLoginButton) azureLoginButton.disabled = false; // Consider context
     }
 });
 
@@ -675,134 +800,187 @@ window.tools = window.tools || {
 
 // Helper function to update status messages
 function updateStatus(message, type = 'info') {
-    const statusElement = document.getElementById('login-status');
-    if (statusElement) {
-        statusElement.textContent = message;
-        statusElement.style.color = type === 'error' ? 'red' : 'green';
-    }
-    console.log(`Status (${type}): ${message}`);
+    const statusEl = document.getElementById('login-status');
+    statusEl.style.color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+    statusEl.textContent = message;
+    
+    // Validate tokens after status update
+    validateTokens();
 }
 
 // --- Credential Login Handler ---
-async function handleCredentialLogin() {
-    const usernameInput = document.getElementById('username');
-    const passwordInput = document.getElementById('password');
-    const username = usernameInput.value.trim();
-    const password = passwordInput.value.trim(); // NOTE: Sending password in clear text, handled by bcrypt on server
-
+async function handleCredentialLogin(event) {
+    event.preventDefault();
+    
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    
     if (!username || !password) {
-        updateStatus('Username and password are required.', 'error');
+        updateStatus('Please enter both username and password', 'error');
         return;
     }
-
-    updateStatus('Logging in...');
-
+    
+    const loginData = {
+        method: 'usernamepassword',
+        username: username,
+        password: password
+    };
+    
     try {
-        // Base64 encode the auth info
-        const authInfo = {
-            method: 'usernamepassword',
-            username: username,
-            password: password
-        };
-        const authInfoStr = JSON.stringify(authInfo);
-        const authInfoBase64 = btoa(authInfoStr); // Standard Base64 encoding
-
-        console.log('Sending username/password authentication request');
-
-        // Send authentication request
         const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
             method: 'POST',
-            body: authInfoBase64
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loginData)
         });
-
+        
         if (!response.ok) {
-            const errorText = await response.text() || `HTTP error ${response.status}`;
-            console.error(`Credential login failed: ${errorText}`);
-            updateStatus(`Login failed: ${errorText}`, 'error');
-            return;
+            throw new Error(`Login failed: ${response.statusText}`);
         }
-
+        
         const data = await response.json();
-
-        if (data && data.token) {
-            console.log('Credential login successful, token received');
-            window.tools.set_auth_info_from_token(data.token); // Store the token
-            updateStatus('Login successful! Redirecting...', 'success');
-
-            // Redirect to the main app page
-            window.location.href = '/timetagger/app/';
-
-        } else {
-            console.error('Credential login failed: No token received.');
-            updateStatus('Login failed: Server did not return a token.', 'error');
-        }
-
+        localStorage.setItem('timetagger_auth_token', data.token);
+        localStorage.setItem('timetagger_auth_info', JSON.stringify({
+            method: 'usernamepassword',
+            username: username
+        }));
+        
+        updateStatus('Successfully logged in', 'success');
+        validateTokens(); // Validate tokens after successful login
+        setTimeout(() => {
+            window.location.href = '/timetagger/app';
+        }, 1000);
     } catch (error) {
-        console.error('Error during credential login:', error);
-        updateStatus('Login failed: An unexpected error occurred.', 'error');
+        console.error('Login error:', error);
+        updateStatus(`Login failed: ${error.message}`, 'error');
+        validateTokens(); // Validate tokens even after error
     }
 }
 
-// --- Azure AD Handling (Initialization and Callback) ---
-const azureAuthHandler = new AzureAuthHandler(azureConfig);
-
-// Check for Azure AD callback parameters AND AZURE ENABLED STATUS
-window.addEventListener('load', () => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state');
-    const error = params.get('error');
-    const errorDescription = params.get('error_description');
-
-    // Check Azure Enabled status first
-    const azureAuthEnabled = localStorage.getItem('timetagger_azure_auth_enabled') === 'true';
-    const azureLoginSection = document.getElementById('azure-login');
-    const azureLoginButton = document.getElementById('azure-login-button'); // Keep reference if needed elsewhere
-
-    if (!azureAuthEnabled) {
-        if (azureLoginSection) {
-            azureLoginSection.style.display = 'none';
-            console.log("Azure AD auth is disabled in config, hiding Azure login option.");
-        }
-    } else {
-        // Azure Auth is enabled, proceed with checks for config and callback
-        console.log("Azure AD auth is enabled in config.");
-        if (azureLoginSection) {
-            azureLoginSection.style.display = 'block'; // Ensure it's visible if enabled
-        }
-
-        if (error) {
-            console.error(`Azure AD Error: ${error} - ${errorDescription}`);
-            updateStatus(`Azure AD login failed: ${errorDescription || error}`, 'error');
-        } else if (code && state) {
-            // Handle the callback if code and state are present
-            updateStatus('Processing Azure AD login...');
-            azureAuthHandler.handleCallback(code, state);
-        } else {
-            console.log("No Azure AD callback detected, showing login form.");
-            // Check if config details are present (only if enabled)
-            if (!azureConfig.clientId || !azureConfig.tenantId) {
-                if (azureLoginSection) {
-                     // Modify the message instead of hiding the button if enabled but not configured
-                    azureLoginSection.innerHTML = '<p>Azure AD login is enabled but not fully configured (missing Client/Tenant ID).</p>';
-                }
-                console.warn("Azure AD config missing Client/Tenant ID, showing warning.");
-            } else {
-                 console.log("Azure AD enabled and configured.");
-                 // Button is already visible due to display = 'block' above
-            }
-        }
-    }
+// Add token validation function
+async function validateTokens() {
+    const tokenStatusDiv = document.getElementById('token-status');
+    const azureStatusPre = document.getElementById('azure-token-status');
+    const timetaggerStatusPre = document.getElementById('timetagger-token-status');
     
-    // Add event listener for Enter key in password field
-    const passwordInput = document.getElementById('password');
-    if (passwordInput) {
-        passwordInput.addEventListener('keypress', function(event) {
-            if (event.key === 'Enter') {
-                event.preventDefault(); // Prevent default form submission
-                handleCredentialLogin();
+    tokenStatusDiv.style.display = 'block';
+    
+    // Check Azure AD tokens
+    let azureStatus = [];
+    try {
+        const azureIdToken = localStorage.getItem('azure_id_token');
+        const azureAccessToken = localStorage.getItem('azure_access_token');
+        
+        if (azureIdToken) {
+            try {
+                const [, payload] = azureIdToken.split('.');
+                const decodedPayload = JSON.parse(atob(payload));
+                azureStatus.push('ID Token:');
+                azureStatus.push(`- Username: ${decodedPayload.preferred_username || 'N/A'}`);
+                azureStatus.push(`- Name: ${decodedPayload.name || 'N/A'}`);
+                azureStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
+                azureStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
+            } catch (e) {
+                azureStatus.push(`Error parsing ID Token: ${e.message}`);
             }
-        });
+        } else {
+            azureStatus.push('ID Token: Not found');
+        }
+        
+        azureStatus.push('\nAccess Token:');
+        if (azureAccessToken) {
+            try {
+                const [, payload] = azureAccessToken.split('.');
+                const decodedPayload = JSON.parse(atob(payload));
+                azureStatus.push('- Present: Yes');
+                azureStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
+                azureStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
+            } catch (e) {
+                azureStatus.push(`Error parsing Access Token: ${e.message}`);
+            }
+        } else {
+            azureStatus.push('- Not found');
+        }
+    } catch (e) {
+        azureStatus.push(`Error checking Azure tokens: ${e.message}`);
+    }
+    azureStatusPre.textContent = azureStatus.join('\n');
+    
+    // Check TimeTagger token
+    let ttStatus = [];
+    try {
+        const ttToken = localStorage.getItem('timetagger_auth_token');
+        const ttAuthInfo = localStorage.getItem('timetagger_auth_info');
+        
+        if (ttToken) {
+            try {
+                const [, payload] = ttToken.split('.');
+                const decodedPayload = JSON.parse(atob(payload));
+                ttStatus.push('Token:');
+                ttStatus.push(`- Username: ${decodedPayload.username || 'N/A'}`);
+                ttStatus.push(`- Admin: ${decodedPayload.is_admin ? 'Yes' : 'No'}`);
+                ttStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
+                ttStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
+            } catch (e) {
+                ttStatus.push(`Error parsing Token: ${e.message}`);
+            }
+        } else {
+            ttStatus.push('Token: Not found');
+        }
+        
+        ttStatus.push('\nAuth Info:');
+        if (ttAuthInfo) {
+            try {
+                const authInfo = JSON.parse(ttAuthInfo);
+                ttStatus.push(`- Method: ${authInfo.method || 'N/A'}`);
+                ttStatus.push(`- Username: ${authInfo.username || 'N/A'}`);
+            } catch (e) {
+                ttStatus.push(`Error parsing Auth Info: ${e.message}`);
+            }
+        } else {
+            ttStatus.push('- Not found');
+        }
+    } catch (e) {
+        ttStatus.push(`Error checking TimeTagger token: ${e.message}`);
+    }
+    timetaggerStatusPre.textContent = ttStatus.join('\n');
+}
+
+// Add to the script section
+window.addEventListener('load', async () => {
+    console.log('Page loaded, validating tokens...');
+    await validateTokens();
+    
+    // Check URL for callback parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    const state = urlParams.get('state');
+    
+    if (code && state) {
+        console.log('Found callback parameters, handling Azure AD callback...');
+        try {
+            // Get Azure config
+            const response = await fetch('/timetagger/api/v2/public_auth_config');
+            if (!response.ok) {
+                throw new Error('Failed to get Azure AD configuration');
+            }
+            const config = await response.json();
+            
+            // Initialize Azure auth handler
+            const azureAuth = new AzureAuthHandler({
+                clientId: config.azure_client_id,
+                tenantId: config.azure_tenant_id,
+                redirectUri: config.azure_redirect_uri,
+                clientSecret: config.azure_client_secret,
+                authority: config.azure_instance || 'https://login.microsoftonline.com/' + config.azure_tenant_id,
+                scope: 'openid profile email'
+            });
+            
+            // Handle the callback
+            await azureAuth.handleCallback(code, state);
+        } catch (error) {
+            console.error('Error handling Azure AD callback:', error);
+            updateStatus('Failed to handle Azure AD callback: ' + error.message, 'error');
+        }
     }
 });
 
@@ -1031,6 +1209,41 @@ h1 {
 
 .status-message i {
     margin-right: 0.5em;
+}
+
+.token-status {
+    margin: 20px 0;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f9f9f9;
+}
+
+.token-status h3 {
+    margin: 0 0 15px 0;
+    color: #333;
+}
+
+.token-section {
+    margin-bottom: 15px;
+}
+
+.token-section h4 {
+    margin: 0 0 10px 0;
+    color: #666;
+}
+
+.token-section pre {
+    margin: 0;
+    padding: 10px;
+    background-color: #fff;
+    border: 1px solid #eee;
+    border-radius: 3px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.4;
 }
 </style>
 

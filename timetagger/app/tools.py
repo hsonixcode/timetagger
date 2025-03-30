@@ -126,36 +126,57 @@ def build_api_url(suffix):
 def get_auth_info():
     """Get the authentication info or None."""
     console.log("[tools.py] get_auth_info called.")
-    auth_info_str = localStorage.getItem("timetagger_auth_info")
-    console.log("[tools.py] timetagger_auth_info from localStorage:", 'Present' if auth_info_str else 'MISSING')
-    if auth_info_str:
-        try:
-            auth_info = JSON.parse(auth_info_str)
-            console.log("[tools.py] Successfully parsed auth_info:", auth_info)
-            # Optional: Add expiration check here if needed by the app
-            # expires = auth_info.get('expires', 0)
-            # now = Date.now() / 1000
-            # if expires < now:
-            #     console.log("[tools.py] Parsed token is expired.")
-            #     return None # Or trigger renewal?
-            return auth_info
-        except Exception as err:
-            console.warn("[tools.py] Cannot parse JSON auth info: " + str(err))
-            localStorage.removeItem("timetagger_auth_info") # Clear invalid item
+    try:
+        auth_info_str = localStorage.getItem("timetagger_auth_info")
+        token = localStorage.getItem("timetagger_auth_token")
+        
+        console.log("[tools.py] timetagger_auth_info from localStorage:", 'Present' if auth_info_str else 'MISSING')
+        console.log("[tools.py] timetagger_auth_token from localStorage:", 'Present' if token else 'MISSING')
+        
+        if auth_info_str and token:
+            try:
+                auth_info = JSON.parse(auth_info_str)
+                # Ensure token is attached
+                auth_info.token = token
+                console.log("[tools.py] Successfully parsed auth_info:", auth_info)
+                return auth_info
+            except Exception as err:
+                console.warn("[tools.py] Cannot parse JSON auth info: " + str(err))
+                localStorage.removeItem("timetagger_auth_info")
+                localStorage.removeItem("timetagger_auth_token")
+                return None
+        else:
+            console.log("[tools.py] No complete auth info found in storage")
             return None
-    else:
-        console.log("[tools.py] No auth_info found in storage.")
+    except Exception as err:
+        console.error("[tools.py] Error getting auth info:", err)
         return None
 
 
 def set_auth_info_from_token(token):
     """Set the authentication by providing a TimeTagger webtoken."""
-    payload_base64 = token.split(".")[1].replace("_", "/")
-    auth_info = JSON.parse(
-        window.decodeURIComponent(window.escape(window.atob(payload_base64)))
-    )
-    auth_info.token = token
-    localStorage.setItem("timetagger_auth_info", JSON.stringify(auth_info))
+    try:
+        # Parse the token payload
+        payload_base64 = token.split(".")[1].replace("_", "/")
+        # Add padding if needed
+        padding = 4 - (len(payload_base64) % 4)
+        if padding != 4:
+            payload_base64 += "=" * padding
+            
+        auth_info = JSON.parse(
+            window.decodeURIComponent(window.escape(window.atob(payload_base64)))
+        )
+        auth_info.token = token
+        
+        # Store both the full auth info and the token separately
+        localStorage.setItem("timetagger_auth_info", JSON.stringify(auth_info))
+        localStorage.setItem("timetagger_auth_token", token)
+        
+        console.log("[tools.py] Auth info and token stored successfully")
+        return auth_info
+    except Exception as err:
+        console.error("[tools.py] Error storing auth info:", err)
+        return None
 
 
 async def logout():

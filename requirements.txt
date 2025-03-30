@@ -7,5 +7,15 @@ jinja2
 markdown
 bcrypt
 iptools
-psycopg2-binary
 httpx>=0.25.0
+werkzeug>=3.0.0
+
+# Database
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Logging
+structlog>=25.2.0
+
+# Rate Limiting
+ratelimit>=2.2.1

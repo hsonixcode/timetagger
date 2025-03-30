@@ -4,11 +4,9 @@ services:
   postgres:
     image: postgres:13
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=${POSTGRES_HOST}
-      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_USER=timetagger
+      - POSTGRES_PASSWORD=timetagger
+      - POSTGRES_DB=timetagger
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -24,7 +22,7 @@ services:
       - TIMETAGGER_BIND=${TIMETAGGER_BIND}
       - TIMETAGGER_LOG_LEVEL=${TIMETAGGER_LOG_LEVEL}
       - TIMETAGGER_CREDENTIALS=${TIMETAGGER_CREDENTIALS}
-      - TIMETAGGER_DB_URL=${TIMETAGGER_DB_URL}
+      - TIMETAGGER_DB_URL=postgresql://timetagger:timetagger@postgres:5432/timetagger
       # Microsoft Entra ID Configuration
       - TIMETAGGER_AZURE_CLIENT_ID=${TIMETAGGER_AZURE_CLIENT_ID}
       - TIMETAGGER_AZURE_TENANT_ID=${TIMETAGGER_AZURE_TENANT_ID}

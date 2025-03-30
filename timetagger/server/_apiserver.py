@@ -230,10 +230,17 @@ async def _get_any_token(auth_info, db, tokenkind, reset):
         expires = int(time.time()) + WEBTOKEN_LIFETIME
     # Create token
     seed = await _get_token_seed_from_db(db, tokenkind, reset)
+    
+    # Check if user is admin (first user in credentials list)
+    from .. import config
+    credentials = config.credentials.replace(";", ",").split(",")
+    is_admin = bool(credentials and credentials[0].startswith(auth_info["username"] + ":"))
+    
     payload = dict(
         username=auth_info["username"],
         expires=expires,
         seed=seed,
+        is_admin=is_admin,
     )
     token = create_jwt(payload)
 
@@ -257,7 +264,7 @@ async def _get_token_seed_from_db(db, tokenkind, reset):
     return seed
 
 
-async def get_webtoken_unsafe(username, reset=False):
+async def get_webtoken_unsafe(username, reset=False, is_admin=None):
     """This function provides a webtoken that can be used to
     authenticate future requests. It is intended to bootstrap the
     authentication; the caller of this function is responsible for the
@@ -278,10 +285,18 @@ async def get_webtoken_unsafe(username, reset=False):
     await db.ensure_table("userinfo", *INDICES["userinfo"])
     # Produce payload
     seed = await _get_token_seed_from_db(db, "webtoken", reset)
+    
+    # Check if user is admin (first user in credentials list) if not explicitly set
+    from .. import config
+    if is_admin is None:
+        credentials = config.credentials.replace(";", ",").split(",")
+        is_admin = bool(credentials and credentials[0].startswith(username + ":"))
+    
     payload = dict(
         username=username,
         expires=int(time.time()) + WEBTOKEN_LIFETIME,
         seed=seed,
+        is_admin=is_admin,
     )
     # Return token
     token = create_jwt(payload)
