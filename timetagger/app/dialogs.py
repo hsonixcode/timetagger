@@ -332,6 +332,10 @@ class MenuDialog(BaseDialog):
     EXIT_ON_CLICK_OUTSIDE = True
     TRANSPARENT_BG = True
 
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.canvas = canvas  # Explicitly store canvas reference
+
     def open(self):
         """Show/open the dialog ."""
 
@@ -435,8 +439,25 @@ class MenuDialog(BaseDialog):
         self.canvas.report_dialog.open()
 
     def _search(self):
+        print("[MenuDialog] Search button clicked")
+        console.log("[MenuDialog] Search button clicked")
         self.close()
-        self.canvas.search_dialog.open()
+        print("[MenuDialog] Attempting to open search dialog")
+        console.log("[MenuDialog] Attempting to open search dialog")
+        try:
+            if not hasattr(self._canvas, 'search_dialog'):
+                print("[MenuDialog] Error: canvas has no search_dialog")
+                console.error("[MenuDialog] Canvas object:", self._canvas)
+                return
+            self._canvas.search_dialog.open()
+            print("[MenuDialog] Search dialog opened successfully")
+            console.log("[MenuDialog] Search dialog opened successfully")
+        except Exception as e:
+            print("[MenuDialog] Error opening search dialog:", str(e))
+            console.error("[MenuDialog] Error opening search dialog:", e)
+            error = window.Error(f"Failed to open search dialog: {str(e)}")
+            error.original_error = e
+            raise error
 
     def _export(self):
         self.close()
@@ -452,6 +473,10 @@ class TimeSelectionDialog(BaseDialog):
 
     EXIT_ON_CLICK_OUTSIDE = True
     TRANSPARENT_BG = True
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.canvas = canvas  # Store canvas reference
 
     def open(self, callback=None):
         """Show/open the dialog ."""
@@ -2417,71 +2442,97 @@ class TagRenameDialog(BaseDialog):
 class SearchDialog(BaseDialog):
     """Dialog to search for records and tags."""
 
-    def open(self):
-        self.maindiv.innerHTML = """
-            <h1><i class='fas'>\uf002</i>&nbsp;&nbsp;Search records and tags
-                <button type='button'><i class='fas'>\uf00d</i></button>
-                </h1>
-            <p>This tool allows you to search records by tags and plain text.
-            Prepend tags/words with "!" to exclude records that match it.
-            <br><br>
-            </p>
-            <div class='container' style='position: relative;'>
-                <input type='text' style='width:100%;' spellcheck='false' />
-                <div class='tag-suggestions-autocomp'></div>
-            </div>
-            <div style='font-size: smaller;'></div>
-            <br>
-            <button type='button'>Search</button>
-            <button type='button'>Manage tags</button>
-            <hr />
-            <div class='record_grid' style='min-height:100px'></div>
-        """
-
-        close_but = self.maindiv.children[0].children[-1]
-        close_but.onclick = self.close
-
-        self._records_node = self.maindiv.children[-1]
-
-        (
-            _,  # h1
-            _,  # p
-            search_container,
-            self._info_div,
-            _,  # br
-            self._search_but,
-            self._tagmanage_but,
-        ) = self.maindiv.children
-
-        self._search_input, self._autocompleter_div = search_container.children
-        self._search_input.placeholder = "Tags or text to search for ..."
-
-        self._search_input.oninput = self._on_user_edit
-        self._search_input.onchange = self._on_user_edit_done
-        self._search_input.onkeydown = self._on_key
-
-        self._search_but.onclick = self._find_records
-        self._tagmanage_but.onclick = self._open_tag_dialog
-
-        self._search_but.disabled = True
-        self._tagmanage_but.disabled = True
-
-        self._autocompleter = Autocompleter(
-            self._autocompleter_div, self._search_input, self._autocomp_finished, 1
-        )
-
-        window._search_dialog_open_record = self._open_record
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self._records_node = None
+        self._search_input = None
+        self._autocompleter_div = None
+        self._info_div = None
+        self._search_but = None
+        self._tagmanage_but = None
+        self._autocompleter = None
         self._records = []
-
         self._current_pos_tags = []
         self._current_neg_tags = []
         self._current_pos_words = []
         self._current_neg_words = []
 
-        super().open(None)
-        self._check_names()
-        if utils.looks_like_desktop():
-            self._search_input.focus()
+    def open(self):
+        print("[SearchDialog] Opening search dialog")
+        console.log("[SearchDialog] Opening search dialog")
+        try:
+            self.maindiv.innerHTML = """
+                <h1><i class='fas'>\uf002</i>&nbsp;&nbsp;Search records and tags
+                    <button type='button'><i class='fas'>\uf00d</i></button>
+                    </h1>
+                <p>This tool allows you to search records by tags and plain text.
+                Prepend tags/words with "!" to exclude records that match it.
+                <br><br>
+                </p>
+                <div class='container' style='position: relative;'>
+                    <input type='text' style='width:100%;' spellcheck='false' />
+                    <div class='tag-suggestions-autocomp'></div>
+                </div>
+                <div style='font-size: smaller;'></div>
+                <br>
+                <button type='button'>Search</button>
+                <button type='button'>Manage tags</button>
+                <hr />
+                <div class='record_grid' style='min-height:100px'></div>
+            """
+
+            close_but = self.maindiv.children[0].children[-1]
+            close_but.onclick = self.close
+
+            self._records_node = self.maindiv.children[-1]
+
+            (
+                _,  # h1
+                _,  # p
+                search_container,
+                self._info_div,
+                _,  # br
+                self._search_but,
+                self._tagmanage_but,
+            ) = self.maindiv.children
+
+            self._search_input, self._autocompleter_div = search_container.children
+            self._search_input.placeholder = "Tags or text to search for ..."
+
+            self._search_input.oninput = self._on_user_edit
+            self._search_input.onchange = self._on_user_edit_done
+            self._search_input.onkeydown = self._on_key
+
+            self._search_but.onclick = self._find_records
+            self._tagmanage_but.onclick = self._open_tag_dialog
+
+            self._search_but.disabled = True
+            self._tagmanage_but.disabled = True
+
+            self._autocompleter = Autocompleter(
+                self._autocompleter_div, self._search_input, self._autocomp_finished, 1
+            )
+
+            window._search_dialog_open_record = self._open_record
+            self._records = []
+
+            self._current_pos_tags = []
+            self._current_neg_tags = []
+            self._current_pos_words = []
+            self._current_neg_words = []
+
+            super().open(None)
+            self._check_names()
+            if utils.looks_like_desktop():
+                self._search_input.focus()
+
+        except Exception as e:
+            print("[SearchDialog] Error opening dialog:", str(e))
+            console.error("[SearchDialog] Error opening dialog:", e)
+            # Create a proper error object for JavaScript
+            error = window.Error(f"Failed to open search dialog: {str(e)}")
+            error.original_error = e
+            raise error
 
     def close(self):
         self._autocompleter.close()
