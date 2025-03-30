@@ -379,7 +379,6 @@ class MenuDialog(BaseDialog):
             (None, True, "External pages", None),
             ("\uf015", True, "Homepage", "/"),
             ("\uf059", True, "Get tips and help", "https://timetagger.app/support"),
-            ("\uf0a1", True, whatsnew, whatsnew_url),
             (None, store_valid, "Manage", None),
             ("\uf002", store_valid, "Search", self._search),
             ("\uf56f", store_valid, "Import records", self._import),

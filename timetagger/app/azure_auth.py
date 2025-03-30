@@ -91,6 +91,7 @@ class AzureAuth:
                 "access_token": tokens["access_token"]
             }
             
+            console.log("Attempting to fetch TimeTagger webtoken using Azure token")
             response = await fetch("/timetagger/api/v2/bootstrap_authentication", {
                 "method": "POST",
                 "headers": {
@@ -105,7 +106,7 @@ class AzureAuth:
             tt_token = await response.json()
             window.tools.set_auth_info_from_token(tt_token["token"])
             
-            # Redirect back to app
+            console.log("Successfully obtained TimeTagger token, redirecting to app")
             location.href = "/timetagger/app/"
             
         except Exception as e:

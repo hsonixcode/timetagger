@@ -63,6 +63,12 @@ apponly_assets = create_assets_from_dir(resources.files("timetagger.app"))
 image_assets = create_assets_from_dir(resources.files("timetagger.images"))
 page_assets = create_assets_from_dir(resources.files("timetagger.pages"))
 
+# Remove index.md from page_assets if it exists
+if "index.md" in page_assets:
+    del page_assets["index.md"]
+if "index.html" in page_assets:
+    del page_assets["index.html"]
+
 # Combine into two groups. You could add/replace assets here.
 app_assets = dict(**common_assets, **image_assets, **apponly_assets)
 web_assets = dict(**common_assets, **image_assets, **page_assets)
@@ -80,15 +86,13 @@ web_asset_handler = asgineer.utils.make_asset_handler(web_assets, max_age=0)
 async def main_handler(request):
     """
     The main handler where we delegate to the API or asset handler.
-
-    We serve at /timetagger for a few reasons, one being that the service
-    worker won't interfere with other stuff you might serve on localhost.
+    The root path redirects directly to the app.
     """
     print(f"Main handler received request for path: {request.path}, method: {request.method}")
     logger.info(f"Main handler received request for path: {request.path}, method: {request.method}")
 
-    if request.path == "/":
-        return 307, {"Location": "/timetagger/"}, b""  # Redirect
+    if request.path == "/" or request.path == "/timetagger/":
+        return 307, {"Location": "/timetagger/app/"}, b""  # Always redirect to app
 
     elif request.path.startswith("/timetagger/"):
         if request.path == "/timetagger/status":
@@ -112,11 +116,7 @@ async def main_handler(request):
                 }
                 print(f"Rendering {path} with context: {template_context}")
                 logger.info(f"Rendering {path} with context keys: {list(template_context.keys())}")
-                # Note: asgineer.utils.make_asset_handler doesn't directly support context.
-                # We might need a custom handler or different templating approach.
-                # For now, let's assume the standard handler *might* pick it up if available somehow,
-                # or this highlights the need for a proper templating engine integration.
-            return await web_asset_handler(request, path) # Pass context if handler supports it
+            return await web_asset_handler(request, path)
 
     else:
         return 404, {}, "only serving at /timetagger/"
