@@ -73,6 +73,9 @@ if "index.html" in page_assets:
 app_assets = dict(**common_assets, **image_assets, **apponly_assets)
 web_assets = dict(**common_assets, **image_assets, **page_assets)
 
+# Log the keys of the collected app_assets
+logger.info(f"Collected app_asset keys: {list(app_assets.keys())}")
+
 # Enable the service worker so the app can be used offline and is installable
 enable_service_worker(app_assets)
 
@@ -90,34 +93,53 @@ web_asset_handler = asgineer.utils.make_asset_handler(
 @asgineer.to_asgi
 async def main_handler(request):
     """Main handler that serves the TimeTagger UI."""
-
+    logger.info(f"Main handler received request for path (raw): {request.path}")
     path = request.path.strip("/")
-    
+    logger.info(f"Main handler processing stripped path: {path}")
+
     # Strip the timetagger prefix if present
+    original_path_before_strip = path
     if path.startswith("timetagger/"):
         path = path[len("timetagger/"):]
+        logger.info(f"Stripped 'timetagger/' prefix. New path: {path}")
+    else:
+         logger.info(f"Path '{original_path_before_strip}' did not start with 'timetagger/'")
 
     # Special handling for service worker
     if path == "sw.js":
+        logger.info(f"Serving service worker: {path}")
         return await app_asset_handler(request, path)
 
     # Redirect root and home to app
     if not path or path == "home":
+        logger.info(f"Redirecting root or home path: {path} to /timetagger/app/")
         return 307, {"Location": "/timetagger/app/"}, "Redirecting to app..."
 
     # Handle app path and app assets
     if path == "app" or path == "app/":
-        return await app_asset_handler(request, "_template.html")
+        logger.info(f"Serving pre-rendered index page (from index.md) for path: {path}")
+        # Look for the empty key which corresponds to index.md -> index.html -> ""
+        index_page_content = app_assets.get("")
+        if index_page_content is not None:
+            return 200, {"Content-Type": "text/html; charset=utf-8"}, index_page_content
+        else:
+             logger.error("Could not find the pre-rendered index page ('') in app_assets!")
+             return 404, {}, "Error: Application index page not found."
+
     elif path.startswith("app/"):
-        return await app_asset_handler(request, path[4:])
+        asset_path = path[4:]
+        logger.info(f"Serving app asset for path: {path}, asset requested: {asset_path}")
+        return await app_asset_handler(request, asset_path)
 
     # Handle API requests
     if path.startswith("api/v2/"):
         api_path = path[len("api/v2/"):]
+        logger.info(f"Forwarding to API handler for path: {path}, API path: {api_path}")
         return await api_handler(request, api_path)
 
     # Handle login, account, and auth callback paths
     if path in ["login", "auth/callback", "account"]:
+        logger.info(f"Serving pages handler for path: {path}")
         template_context = {
             'timetagger_azure_client_id': os.environ.get('TIMETAGGER_AZURE_CLIENT_ID', ''),
             'timetagger_azure_tenant_id': os.environ.get('TIMETAGGER_AZURE_TENANT_ID', ''),
@@ -125,11 +147,14 @@ async def main_handler(request):
             'timetagger_azure_client_secret': os.environ.get('TIMETAGGER_AZURE_CLIENT_SECRET', '')
         }
         # For callback, use login page
+        page_to_serve = path
         if path == "auth/callback":
-            path = "login"
-        return await pages_handler(request, path, template_context)
+            page_to_serve = "login"
+            logger.info(f"Mapping 'auth/callback' to 'login' page.")
+        return await pages_handler(request, page_to_serve, template_context)
 
     # Handle all other paths with web assets
+    logger.info(f"Serving web asset handler for path: {path}")
     return await web_asset_handler(request, path)
 
 

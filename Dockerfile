@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# Install the package in development mode
+RUN pip install -e .
+
 # Create a non-root user and set up data directory
 RUN useradd -m -u 1000 timetagger && \
     mkdir -p /home/timetagger/.timetagger/users && \

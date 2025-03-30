@@ -126,7 +126,7 @@ def create_assets_from_dir(dirname, template=None):
     template = jinja2.Template(thtml)
 
     for fname in sorted(os.listdir(dirname)):
-        if fname.startswith("_"):
+        if fname.startswith("_") and fname != "_template.html":
             continue
         elif fname.endswith(".md"):
             # Turn markdown into HTML
@@ -139,7 +139,9 @@ def create_assets_from_dir(dirname, template=None):
             text = open(os.path.join(dirname, fname), "rb").read().decode()
             assets[fname[:-5] + ".css"] = compile_scss(text)
         elif fname.endswith(".html"):
-            # Raw HTML
+            # Raw HTML - skip _template.html as it's handled separately
+            if fname == "_template.html":
+                continue 
             text = open(os.path.join(dirname, fname), "rb").read().decode()
             assets[fname[:-5]] = text
         elif fname.endswith(".py"):

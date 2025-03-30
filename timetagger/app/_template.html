@@ -6,22 +6,22 @@
   <meta name="description" content="{{ description }}">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#F4F4F4">
-  <link rel="manifest" href="timetagger_manifest.json">
-  <link rel="icon" sizes="192x192" href="timetagger192_sf.png">
+  <link rel="manifest" href="/timetagger/app/timetagger_manifest.json">
+  <link rel="icon" sizes="192x192" href="/timetagger/app/timetagger192_sf.png">
 
   <style>
   {{ embedded_style }}
   </style>
-  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="/timetagger/app/app.css">
 
-  <script src='tools.js'></script>
-  <script src='utils.js'></script>
-  <script src='dt.js'></script>
-  <script src='stores.js'></script>
-  <script src='dialogs.js'></script>
-  <script src='front.js'></script>
-  <script src='jspdf.js'></script>
-  <script src='Ubuntu-C-normal.js'></script>
+  <script src='/timetagger/app/tools.js'></script>
+  <script src='/timetagger/app/utils.js'></script>
+  <script src='/timetagger/app/dt.js'></script>
+  <script src='/timetagger/app/stores.js'></script>
+  <script src='/timetagger/app/dialogs.js'></script>
+  <script src='/timetagger/app/front.js'></script>
+  <script src='/timetagger/app/jspdf.js'></script>
+  <script src='/timetagger/app/Ubuntu-C-normal.js'></script>
 
   <script>
   window.timetaggerversion = '{{ versionstring }}';
@@ -59,9 +59,9 @@
         <span class='fas' style='color: #eee;'></span>
 
         <!-- Load images that we need an img element for -->
-        <img id='ttlogo_bd' alt='TimeTagger logo' src='timetagger192_bd.png' width='2px' />
-        <img id='ttlogo_sl' alt='TimeTagger logo' src='timetagger192_sl.png' width='2px' />
-        <img id='ttlogo_tg' alt='TimeTagger logo' src='timetagger192_tg.png' width='2px' />
+        <img id='ttlogo_bd' alt='TimeTagger logo' src='/timetagger/app/timetagger192_bd.png' width='2px' />
+        <img id='ttlogo_sl' alt='TimeTagger logo' src='/timetagger/app/timetagger192_sl.png' width='2px' />
+        <img id='ttlogo_tg' alt='TimeTagger logo' src='/timetagger/app/timetagger192_tg.png' width='2px' />
     </div>
 </main>
 
@@ -126,12 +126,12 @@
     window.addEventListener('load', async function() {
         try {
             const scripts = [
-                './tools.js',
-                './utils.js',
-                './dt.js',
-                './stores.js',
-                './dialogs.js',
-                './front.js'
+                '/timetagger/app/tools.js',
+                '/timetagger/app/utils.js',
+                '/timetagger/app/dt.js',
+                '/timetagger/app/stores.js',
+                '/timetagger/app/dialogs.js',
+                '/timetagger/app/front.js'
             ];
             
             await loadScriptSequentially(scripts);

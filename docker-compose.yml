@@ -19,7 +19,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./timetagger:/app/timetagger
+      - .:/app
     environment:
       - TIMETAGGER_BIND=${TIMETAGGER_BIND}
       - TIMETAGGER_LOG_LEVEL=${TIMETAGGER_LOG_LEVEL}
