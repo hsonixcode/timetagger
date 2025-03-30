@@ -282,16 +282,16 @@ class TimeTaggerCanvas(BaseCanvas):
         # ctx.fillRect(0, 0, self.w, self.h)
 
         # Draw icon in bottom right
-        if self.w >= 800:
-            iconw = 162 if self.w >= 400 else 96
-            iconh = iconw / 6
-            ctx.drawImage(
-                window.document.getElementById("ttlogo_tg"),
-                self.w - iconw - 5,
-                self.h - iconh - 5,
-                iconw,
-                iconh,
-            )
+        # if self.w >= 800:
+        #     iconw = 162 if self.w >= 400 else 96
+        #     iconh = iconw / 6
+        #     ctx.drawImage(
+        #         window.document.getElementById("ttlogo_tg"),
+        #         self.w - iconw - 5,
+        #         self.h - iconh - 5,
+        #         iconw,
+        #         iconh,
+        #     )
 
         # Determine if we are logged in and all is right (e.g. token not expired)
         cantuse = None

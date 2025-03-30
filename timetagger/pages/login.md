@@ -1,5 +1,5 @@
-% TimeTagger - Login
-% The TimeTagger application.
+% Time Tracker - Login
+% The Time Tracker application.
 
 <script>
 // Set Azure AD configuration variables
@@ -810,7 +810,7 @@ async function testPostRequest() {
 </script>
 
 <div class="login-container">
-    <h1>TimeTagger Login</h1>
+    <h1>Time Tracker Login</h1>
     <div id="status">Initializing...</div>
     <button onclick="window.handleAzureLogin()">Login with Azure AD</button>
     <div id="error-message" class="error-message"></div>
@@ -831,7 +831,7 @@ async function testPostRequest() {
             <h3>Azure AD Token Information</h3>
             <div id="azure-token-details" class="token-details"></div>
             
-            <h3>TimeTagger Token Information</h3>
+            <h3>Time Tracker Token Information</h3>
             <div id="tt-token-details" class="token-details"></div>
 
             <h3>All localStorage Items</h3>
