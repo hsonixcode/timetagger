@@ -46,7 +46,9 @@ from timetagger.server import (
 import httpx
 
 # Import our multiuser API handlers - change from relative to absolute import
-from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, record_login_test, debug_azure_users
+from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, debug_azure_users
+# Import the api module properly for function calls
+from timetagger.multiuser import api
 
 # Special hooks exit early
 if __name__ == "__main__" and len(sys.argv) >= 2:
@@ -414,148 +416,74 @@ async def api_handler(request, path):
 
 
 async def api_handler_triage(request, path, auth_info, db):
-    """Handle API requests that require authentication."""
+    """
+    Triage API endpoints to the appropriate handler.
+    """
+    # Extract important request info
+    method = request.method
+    path = path or request.path
+    path = path.lstrip('/').rstrip('/')
     
-    # Get the request method
-    method = request.method.upper()
+    # Normalize path
+    if path.startswith('api/'):
+        path = path[4:]
+    if path.startswith('v2/'):
+        path = path[3:]
     
-    # Extract the base path (before any numeric ID)
-    base_path = path
-    path_parts = path.split('/')
-    
-    # Log the path for debugging
-    logger.info(f"API request path: {path}, Parts: {path_parts}")
-    
-    # Handle multiuser endpoints
-    if path == "users":
-        from timetagger.multiuser.api import get_users
+    # Dispatch to appropriate handler
+    if path == 'login':
+        return await timetagger.server._apiserver.login(request)
+    elif path == 'logout':
+        return await timetagger.server._apiserver.logout(request)
+    elif path == 'users':
         return await get_users(request, auth_info)
-    elif path == "users/search":
-        from timetagger.multiuser.api import search_users
-        return await search_users(request, auth_info)
-    elif path == "users/update_access":
-        from timetagger.multiuser.api import update_user_access
+    elif path == 'login-users':
+        return await get_login_users(request, auth_info)
+    elif path == 'users/update-role':
+        # This endpoint doesn't exist in our API, return a 501 Not Implemented
+        logger.warning(f"Update role endpoint called but not implemented")
+        return 501, {}, {"error": "Not implemented: users/update-role endpoint"}
+    elif path == 'users/update-access':
         return await update_user_access(request, auth_info)
-    elif path == "users/record_login_test":
-        from timetagger.multiuser.api import record_login_test
-        return await record_login_test(request, auth_info)
-    elif path == "login-users" or path.startswith("login-users/"):
-        # Handle login-users endpoints with potential IDs
-        if path == "login-users/backfill":
-            from timetagger.multiuser.api import backfill_login_database
-            return await backfill_login_database(request, auth_info)
-        elif path == "login-users/debug":
-            from timetagger.multiuser.api import debug_azure_users
-            return await debug_azure_users(request, auth_info)
+    elif path == 'users/debug-azure':
+        return await debug_azure_users(request, auth_info)
+    elif path == 'users/backfill':
+        return await backfill_login_database(request, auth_info)
+    elif path == 'azure/config':
+        from timetagger.server.config_api import get_azure_config
+        return await get_azure_config(request, auth_info)
+    elif path == 'azure/config/update':
+        from timetagger.server.config_api import update_azure_config
+        return await update_azure_config(request, auth_info)
+    elif path == 'app_config':
+        from timetagger.server.config_api import get_full_app_config, update_app_config
+        if request.method.upper() == 'GET':
+            config = get_full_app_config(auth_info)
+            return 200, {"content-type": "application/json"}, config
+        elif request.method.upper() == 'POST':
+            try:
+                new_config = await request.get_json()
+                updated_config = update_app_config(auth_info, new_config)
+                return 200, {"content-type": "application/json"}, updated_config
+            except ValueError as e:
+                return 400, {"content-type": "application/json"}, {"error": str(e)}
+            except Exception as e:
+                logger.error(f"Error updating app_config: {str(e)}")
+                return 500, {"content-type": "application/json"}, {"error": str(e)}
         else:
-            # This handles both "login-users" and "login-users/{id}" cases
-            from timetagger.multiuser.api import get_login_users
-            # Add path to request object for later extraction if needed
-            if not hasattr(request, 'path'):
-                request.path = path
-            return await get_login_users(request, auth_info)
-    
-    # Handle Azure config endpoints
-    if path == "config/azure":
-        from .server.config_api import get_azure_config, update_azure_config
+            return 405, {"content-type": "application/json"}, {"error": "Method not allowed"}
+    # Data API endpoints
+    elif path.startswith('data/'):
+        # Strip 'data/' part
+        subpath = path[5:]
+        return await timetagger.server._apiserver.data_api_handler(request, subpath, auth_info, db)
+    else:
+        # Try to use the default handler if provided
         try:
-            if method == "GET":
-                config = get_azure_config(auth_info)
-                return 200, {"content-type": "application/json"}, config
-            elif method == "POST":
-                if not request.headers.get("content-type", "").startswith("application/json"):
-                    return 400, {"content-type": "application/json"}, {
-                        "error": "Invalid content type",
-                        "details": "Request must be application/json"
-                    }
-                try:
-                    new_config = await request.get_json()
-                    updated_config = update_azure_config(auth_info, new_config)
-                    return 200, {"content-type": "application/json"}, updated_config
-                except ValueError as e:
-                    return 400, {"content-type": "application/json"}, {
-                        "error": "Invalid configuration",
-                        "details": str(e)
-                    }
-            else:
-                return 405, {"content-type": "application/json"}, {
-                    "error": "Method not allowed",
-                    "allowed_methods": ["GET", "POST"]
-                }
-        except AuthException as e:
-            return 403, {"content-type": "application/json"}, {
-                "error": "Forbidden",
-                "details": str(e)
-            }
+            return await timetagger.server._apiserver.api_handler_triage(request, path, auth_info, db)
         except Exception as e:
-            logger.error("azure_config.handler_error",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                        user=auth_info.get('username'))
-            return 500, {"content-type": "application/json"}, {
-                "error": "Internal server error",
-                "details": str(e)
-            }
-    
-    # Handle config endpoints
-    if path == "app_config":
-        from .server.config_api import get_full_app_config, update_app_config
-        
-        try:
-            if method == "GET":
-                config = get_full_app_config(auth_info)
-                return 200, {}, config
-            elif method == "POST":
-                if not request.headers.get("content-type", "").startswith("application/json"):
-                    return 400, {"content-type": "application/json"}, {
-                        "error": "Invalid content type",
-                        "details": "Request must be application/json"
-                    }
-                
-                try:
-                    new_config = await request.get_json()
-                except ValueError as e:
-                    return 400, {"content-type": "application/json"}, {
-                        "error": "Invalid JSON",
-                        "details": str(e)
-                    }
-                
-                try:
-                    # Extract the actual config from the value field
-                    if isinstance(new_config, dict) and 'value' in new_config:
-                        config_value = new_config['value']
-                    else:
-                        config_value = new_config
-                    
-                    updated_config = update_app_config(auth_info, config_value)
-                    return 200, {"content-type": "application/json"}, updated_config
-                except ValueError as e:
-                    return 400, {"content-type": "application/json"}, {
-                        "error": "Invalid configuration",
-                        "details": str(e)
-                    }
-            else:
-                return 405, {"content-type": "application/json"}, {
-                    "error": "Method not allowed",
-                    "allowed_methods": ["GET", "POST"]
-                }
-        except AuthException as e:
-            return 403, {"content-type": "application/json"}, {
-                "error": "Forbidden",
-                "details": str(e)
-            }
-        except Exception as e:
-            logger.error("app_config.handler_error",
-                        error=str(e),
-                        error_type=type(e).__name__,
-                        user=auth_info.get('username'))
-            return 500, {"content-type": "application/json"}, {
-                "error": "Internal server error",
-                "details": str(e)
-            }
-    
-    # Handle other existing endpoints
-    return await timetagger.server._apiserver.api_handler_triage(request, path, auth_info, db)
+            logger.error(f"Error in API handler: {str(e)}")
+            return 404, {}, {'error': f'API endpoint not found: {path}'}
 
 
 async def get_webtoken(request):

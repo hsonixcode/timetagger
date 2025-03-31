@@ -23,16 +23,9 @@
         <ul style="padding-left: 20px; margin-top: 15px;">
             <li style="margin-bottom: 8px;"><a href="/timetagger/admin" style="color: #007bff; text-decoration: none;">Admin Dashboard</a></li>
             <li style="margin-bottom: 8px;"><a href="/timetagger/configure_external_auth" style="color: #007bff; text-decoration: none;">Configure Azure AD Authentication</a></li>
-            <li style="margin-bottom: 8px;"><button id="backfill-button" onclick="runBackfill()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Run Login Database Backfill</button></li>
-            <li style="margin-bottom: 8px;"><button id="debug-button" onclick="toggleDebugInfo()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Toggle Debug Information</button></li>
-            <li style="margin-bottom: 8px;"><button id="test-azure-button" onclick="testAzureLogin()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Test Azure User Recording</button></li>
-            <li style="margin-bottom: 8px;"><button id="debug-azure-users" onclick="debugAzureUsers()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Debug Azure Users in Database</button></li>
         </ul>
-        <p id="backfill-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
-        <p id="test-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
-        <p id="debug-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
     </div>
-    
+
     <!-- Debug Information Panel -->
     <div id="debug-panel" style="margin-top: 2em; background-color: white; padding: 1.5em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: none;">
         <h3 style="margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;">Debug Information</h3>
@@ -401,6 +394,7 @@ async function loadUsers() {
                     data.login_users.forEach(user => {
                         formattedUsers.push({
                             username: user.username,
+                            name: user.name || user.username,
                             email: user.email,
                             role: user.role || 'user',
                             allowed: user.access === 'allowed',
@@ -464,6 +458,7 @@ async function loadUsers() {
                     data.local_users.forEach(user => {
                         formattedUsers.push({
                             username: user.username,
+                            name: user.name || user.username,
                             email: user.email || user.username,
                             role: user.role || 'user',
                             allowed: user.is_allowed !== false,
@@ -478,6 +473,7 @@ async function loadUsers() {
                     data.azure_users.forEach(user => {
                         formattedUsers.push({
                             username: user.username,
+                            name: user.name || user.username,
                             email: user.email || user.username,
                             role: user.role || 'user',
                             allowed: user.is_allowed !== false,
@@ -536,7 +532,7 @@ function createUsersTable(users) {
     users = users || [];
     
     if (!users || users.length === 0) {
-        tableContainer.innerHTML = '<p>No users found.</p>';
+        tableContainer.innerHTML = '<div class="empty-state"><p>No users found.</p></div>';
         return;
     }
     
@@ -550,103 +546,570 @@ function createUsersTable(users) {
         const header = document.createElement('h3');
         header.textContent = headerText;
         
-        // Create table
-        const table = document.createElement('table');
-        table.className = 'table table-striped';
+        // Create a compact style for users list
+        const style = document.createElement('style');
+        style.textContent = `
+            .user-list {
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                overflow: hidden;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                max-height: 600px;
+                display: flex;
+                flex-direction: column;
+            }
+            .list-header {
+                display: grid;
+                grid-template-columns: minmax(200px, 3fr) minmax(200px, 2fr) minmax(180px, 1fr) minmax(100px, 1fr);
+                gap: 10px;
+                padding: 10px 15px;
+                background-color: #f8f9fa;
+                border-bottom: 2px solid #dee2e6;
+                font-weight: 600;
+                color: #495057;
+                font-size: 13px;
+                position: sticky;
+                top: 0;
+                z-index: 10;
+            }
+            .user-items-container {
+                overflow-y: auto;
+                scrollbar-width: thin;
+                scrollbar-color: #d1d1d1 #f8f9fa;
+                max-height: 550px;
+            }
+            .user-items-container::-webkit-scrollbar {
+                width: 8px;
+            }
+            .user-items-container::-webkit-scrollbar-track {
+                background: #f8f9fa;
+            }
+            .user-items-container::-webkit-scrollbar-thumb {
+                background-color: #d1d1d1;
+                border-radius: 4px;
+            }
+            .user-item {
+                padding: 10px 15px;
+                border-bottom: 1px solid #f0f0f0;
+                display: grid;
+                grid-template-columns: minmax(200px, 3fr) minmax(200px, 2fr) minmax(180px, 1fr) minmax(100px, 1fr);
+                gap: 10px;
+                align-items: center;
+                background-color: #fff;
+                transition: background-color 0.2s;
+                font-size: 14px;
+            }
+            .user-item:hover {
+                background-color: #f9f9f9;
+            }
+            .user-item:last-child {
+                border-bottom: none;
+            }
+            .user-info {
+                display: flex;
+                flex-direction: column;
+            }
+            .user-name {
+                font-weight: 600;
+                margin-bottom: 2px;
+            }
+            .user-email {
+                color: #6c757d;
+                font-size: 13px;
+            }
+            .user-controls {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+            .control-group {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                white-space: nowrap;
+            }
+            .control-label {
+                font-weight: 500;
+                color: #495057;
+                font-size: 13px;
+            }
+            .role-select {
+                padding: 4px 8px;
+                border-radius: 4px;
+                border: 1px solid #ced4da;
+                font-size: 13px;
+                background-color: #fff;
+            }
+            .access-badge {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+                color: white;
+            }
+            .access-badge.allowed {
+                background-color: #28a745;
+            }
+            .access-badge.denied {
+                background-color: #dc3545;
+            }
+            .user-type-badge {
+                display: inline-block;
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+                color: white;
+                margin-left: 6px;
+            }
+            .user-type-badge.azure {
+                background-color: #17a2b8;
+            }
+            .user-type-badge.local {
+                background-color: #6c757d;
+            }
+            .toggle-switch {
+                position: relative;
+                display: inline-block;
+                width: 36px;
+                height: 20px;
+            }
+            .toggle-switch input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .toggle-slider {
+                position: absolute;
+                cursor: pointer;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background-color: #dc3545;
+                border-radius: 20px;
+                transition: .3s;
+            }
+            .toggle-slider:before {
+                position: absolute;
+                content: "";
+                height: 16px;
+                width: 16px;
+                left: 2px;
+                bottom: 2px;
+                background-color: white;
+                border-radius: 50%;
+                transition: .3s;
+            }
+            input:checked + .toggle-slider {
+                background-color: #28a745;
+            }
+            input:disabled + .toggle-slider {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+            input:checked + .toggle-slider:before {
+                transform: translateX(16px);
+            }
+            .last-activity {
+                color: #6c757d;
+                font-size: 13px;
+                text-align: right;
+            }
+            .azure-user {
+                border-left: 3px solid #17a2b8;
+            }
+            .disabled-user {
+                border-left: 3px solid #dc3545;
+                background-color: #fff8f8;
+            }
+            .disabled-badge {
+                background-color: #dc3545;
+                color: white;
+                font-size: 11px;
+                padding: 1px 5px;
+                border-radius: 10px;
+                margin-left: 6px;
+                font-weight: 600;
+            }
+            @media (max-width: 992px) {
+                .user-item, .list-header {
+                    grid-template-columns: minmax(200px, 2fr) minmax(180px, 1fr) 100px;
+                }
+                .last-activity {
+                    display: none;
+                }
+            }
+            @media (max-width: 768px) {
+                .user-item, .list-header {
+                    grid-template-columns: 1fr;
+                    gap: 8px;
+                }
+                .user-controls {
+                    margin-top: 8px;
+                }
+            }
+        `;
+        document.head.appendChild(style);
         
-        // Create table header
-        const thead = document.createElement('thead');
-        const headerRow = document.createElement('tr');
+        // Create user list container
+        const userListContainer = document.createElement('div');
+        userListContainer.className = 'user-list';
         
-        const headers = ['Username', 'Email', 'Role', 'User Type', 'Status', 'Last Activity', 'Actions'];
-        headers.forEach(headerText => {
-            const th = document.createElement('th');
-            th.textContent = headerText;
-            headerRow.appendChild(th);
-        });
+        // Add list header
+        const listHeader = document.createElement('div');
+        listHeader.className = 'list-header';
         
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
+        const userInfoHeader = document.createElement('div');
+        userInfoHeader.textContent = 'User';
         
-        // Create table body
-        const tbody = document.createElement('tbody');
+        const controlsHeader = document.createElement('div');
+        controlsHeader.textContent = 'Role & Access';
         
+        const typeHeader = document.createElement('div');
+        typeHeader.textContent = 'Type & Status';
+        
+        const lastActivityHeader = document.createElement('div');
+        lastActivityHeader.textContent = 'Last Activity';
+        
+        listHeader.appendChild(userInfoHeader);
+        listHeader.appendChild(controlsHeader);
+        listHeader.appendChild(typeHeader);
+        listHeader.appendChild(lastActivityHeader);
+        
+        userListContainer.appendChild(listHeader);
+        
+        // Create a scrollable container for user items
+        const userItemsContainer = document.createElement('div');
+        userItemsContainer.className = 'user-items-container';
+        
+        // Process each user
         users.forEach(user => {
             if (!user) return; // Skip null/undefined users
             
-            const row = document.createElement('tr');
+            // Create user item
+            const userItem = document.createElement('div');
+            userItem.className = 'user-item';
+            userItem.dataset.username = user.username;
             
-            // Highlight Azure users with a subtle background
+            // Add appropriate classes for styling
             if (user.userType === 'azure') {
-                row.style.backgroundColor = '#f0f8ff'; // Light blue background
+                userItem.classList.add('azure-user');
             }
             
-            // Username
-            const usernameCell = document.createElement('td');
-            usernameCell.textContent = user.username || '';
-            row.appendChild(usernameCell);
+            if (!user.allowed) {
+                userItem.classList.add('disabled-user');
+            }
             
-            // Email
-            const emailCell = document.createElement('td');
-            emailCell.textContent = user.email || '';
-            row.appendChild(emailCell);
+            // 1. User info column
+            const userInfo = document.createElement('div');
+            userInfo.className = 'user-info';
             
-            // Role
-            const roleCell = document.createElement('td');
-            const roleBadge = document.createElement('span');
-            roleBadge.textContent = user.role || 'user';
-            roleBadge.className = 'badge ' + ((user.role || '') === 'admin' ? 'badge-primary' : 'badge-secondary');
-            roleBadge.style.padding = '0.4em 0.6em';
-            roleCell.appendChild(roleBadge);
-            row.appendChild(roleCell);
+            const userName = document.createElement('div');
+            userName.className = 'user-name';
+            userName.textContent = user.name || user.username || '';
             
-            // User Type
-            const typeCell = document.createElement('td');
+            // Add access disabled badge if needed
+            if (!user.allowed) {
+                const disabledBadge = document.createElement('span');
+                disabledBadge.className = 'disabled-badge';
+                disabledBadge.textContent = 'DISABLED';
+                userName.appendChild(disabledBadge);
+            }
+            
+            const userEmail = document.createElement('div');
+            userEmail.className = 'user-email';
+            userEmail.textContent = user.email || '';
+            
+            userInfo.appendChild(userName);
+            userInfo.appendChild(userEmail);
+            
+            // 2. Controls column (Role and Access)
+            const userControls = document.createElement('div');
+            userControls.className = 'user-controls';
+            
+            // Role control
+            const roleControl = document.createElement('div');
+            roleControl.className = 'control-group';
+            
+            const roleLabel = document.createElement('label');
+            roleLabel.className = 'control-label';
+            roleLabel.textContent = 'Role:';
+            roleLabel.htmlFor = `role-select-${user.username}`;
+            
+            const roleSelect = document.createElement('select');
+            roleSelect.className = 'role-select';
+            roleSelect.id = `role-select-${user.username}`;
+            roleSelect.dataset.username = user.username;
+            
+            // Add options
+            const roles = ['user', 'admin', 'guest'];
+            roles.forEach(role => {
+                const option = document.createElement('option');
+                option.value = role;
+                option.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+                option.selected = user.role === role;
+                roleSelect.appendChild(option);
+            });
+            
+            // Add event listener for role change
+            roleSelect.addEventListener('change', async function() {
+                const username = this.dataset.username;
+                const newRole = this.value;
+                const isAllowed = document.getElementById(`access-toggle-${username}`).checked;
+                
+                try {
+                    await updateUserAccess(username, isAllowed, newRole);
+                } catch (error) {
+                    console.error('Error updating role:', error);
+                    this.value = user.role; // Reset to original value on error
+                    showToast('Error updating role: ' + error.message, 'error');
+                }
+            });
+            
+            roleControl.appendChild(roleLabel);
+            roleControl.appendChild(roleSelect);
+            
+            // Access toggle
+            const accessControl = document.createElement('div');
+            accessControl.className = 'control-group';
+            
+            const accessLabel = document.createElement('label');
+            accessLabel.className = 'control-label';
+            accessLabel.textContent = 'Access:';
+            accessLabel.htmlFor = `access-toggle-${user.username}`;
+            
+            const toggleContainer = document.createElement('label');
+            toggleContainer.className = 'toggle-switch';
+            
+            const accessToggle = document.createElement('input');
+            accessToggle.type = 'checkbox';
+            accessToggle.id = `access-toggle-${user.username}`;
+            accessToggle.checked = user.allowed;
+            accessToggle.dataset.username = user.username;
+            accessToggle.dataset.role = user.role;
+            
+            // Disable toggle for admin users
+            if (user.role === 'admin') {
+                accessToggle.disabled = true;
+                toggleContainer.title = 'Admin accounts must always have access';
+            }
+            
+            const toggleSlider = document.createElement('span');
+            toggleSlider.className = 'toggle-slider';
+            
+            // Add event listener for access toggle
+            accessToggle.addEventListener('change', async function() {
+                const username = this.dataset.username;
+                const role = this.dataset.role;
+                const isAllowed = this.checked;
+                
+                // Prevent disabling admin accounts
+                if (!isAllowed && role === 'admin') {
+                    alert('Cannot disable admin accounts. Admins must always have access.');
+                    this.checked = true; // Reset to checked
+                    return;
+                }
+                
+                try {
+                    await updateUserAccess(username, isAllowed, role);
+                } catch (error) {
+                    console.error('Error updating access:', error);
+                    this.checked = user.allowed; // Reset to original value on error
+                    showToast('Error updating access: ' + error.message, 'error');
+                }
+            });
+            
+            toggleContainer.appendChild(accessToggle);
+            toggleContainer.appendChild(toggleSlider);
+            
+            accessControl.appendChild(accessLabel);
+            accessControl.appendChild(toggleContainer);
+            
+            userControls.appendChild(roleControl);
+            userControls.appendChild(accessControl);
+            
+            // 3. Type and status column
+            const typeAndStatus = document.createElement('div');
+            typeAndStatus.className = 'type-status';
+            
+            // User type badge
             const typeBadge = document.createElement('span');
-            typeBadge.textContent = user.userType || 'local';
-            typeBadge.className = 'badge ' + ((user.userType || '') === 'azure' ? 'badge-info' : 'badge-secondary');
-            typeBadge.style.padding = '0.4em 0.6em';
-            typeCell.appendChild(typeBadge);
-            row.appendChild(typeCell);
+            typeBadge.className = `user-type-badge ${user.userType === 'azure' ? 'azure' : 'local'}`;
+            typeBadge.textContent = user.userType === 'azure' ? 'Azure' : 'Local';
             
-            // Status
-            const statusCell = document.createElement('td');
-            const statusBadge = document.createElement('span');
-            statusBadge.textContent = user.allowed ? 'Allowed' : 'Not Allowed';
-            statusBadge.className = 'badge ' + (user.allowed ? 'badge-success' : 'badge-danger');
-            statusBadge.style.padding = '0.4em 0.6em';
-            statusCell.appendChild(statusBadge);
-            row.appendChild(statusCell);
+            // Access status badge
+            const accessBadge = document.createElement('span');
+            accessBadge.className = `access-badge ${user.allowed ? 'allowed' : 'denied'}`;
+            accessBadge.textContent = user.allowed ? 'Allowed' : 'Not Allowed';
+            accessBadge.style.marginLeft = '8px';
             
-            // Last Activity
-            const lastLoginCell = document.createElement('td');
-            lastLoginCell.textContent = user.lastLogin || 'Never';
-            row.appendChild(lastLoginCell);
+            typeAndStatus.appendChild(typeBadge);
+            typeAndStatus.appendChild(accessBadge);
             
-            // Actions
-            const actionsCell = document.createElement('td');
+            // 4. Last activity column
+            const lastActivity = document.createElement('div');
+            lastActivity.className = 'last-activity';
+            lastActivity.textContent = user.lastLogin || 'Never';
             
-            // Toggle access button
-            const toggleButton = document.createElement('button');
-            toggleButton.className = 'btn btn-sm ' + (user.allowed ? 'btn-outline-danger' : 'btn-outline-success');
-            toggleButton.textContent = user.allowed ? 'Disable Access' : 'Enable Access';
-            toggleButton.onclick = () => toggleUserAccess(user.username, !user.allowed);
-            actionsCell.appendChild(toggleButton);
+            // Add everything to the user item
+            userItem.appendChild(userInfo);
+            userItem.appendChild(userControls);
+            userItem.appendChild(typeAndStatus);
+            userItem.appendChild(lastActivity);
             
-            row.appendChild(actionsCell);
-            
-            tbody.appendChild(row);
+            // Add the user item to the items container
+            userItemsContainer.appendChild(userItem);
         });
         
-        table.appendChild(tbody);
+        // Add the items container to the user list container
+        userListContainer.appendChild(userItemsContainer);
         
-        // Clear the container and add the new table
+        // Clear the container and add the new components
         tableContainer.innerHTML = '';
         tableContainer.appendChild(header);
-        tableContainer.appendChild(table);
+        tableContainer.appendChild(userListContainer);
     } catch (error) {
-        console.error('Error creating users table:', error);
-        tableContainer.innerHTML = `<p>Error creating users table: ${error.message}</p>`;
+        console.error('Error creating users list:', error);
+        tableContainer.innerHTML = `<p>Error creating users list: ${error.message}</p>`;
+    }
+}
+
+// Function to update user access with role
+async function updateUserAccess(username, isAllowed, role) {
+    if (!username) {
+        throw new Error('Username is required to update access');
+    }
+    
+    // Prevent disabling admin accounts
+    if (!isAllowed && role === 'admin') {
+        throw new Error('Cannot disable admin accounts. Admins must always have access.');
+    }
+    
+    const statusElement = document.getElementById('debug-status');
+    if (statusElement) {
+        statusElement.textContent = `Updating ${username}: role=${role}, access=${isAllowed ? 'allowed' : 'not allowed'}...`;
+        statusElement.style.color = '#6c757d';
+    }
+    
+    const authToken = getAuthToken();
+    if (!authToken) {
+        throw new Error('No authentication token found. Please log in again.');
+    }
+    
+    // Call the API to update user access
+    const response = await fetch('/api/v2/users/update_access', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'authtoken': authToken
+        },
+        body: JSON.stringify({
+            username: username,
+            is_allowed: isAllowed,
+            role: role
+        })
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+    }
+    
+    const data = await response.json();
+    
+    // Show success message
+    if (statusElement) {
+        statusElement.textContent = `Successfully updated ${username}: role=${role}, access=${isAllowed ? 'allowed' : 'not allowed'}`;
+        statusElement.style.color = '#28a745';
+    }
+    
+    // Show toast notification
+    showToast(`User ${username} updated successfully`, 'success');
+    
+    // Reload users after a short delay
+    setTimeout(async () => {
+        await loadUsers();
+    }, 1000);
+    
+    return data;
+}
+
+// Function to show toast notification
+function showToast(message, type = 'info') {
+    // Create toast container if it doesn't exist
+    let toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.id = 'toast-container';
+        toastContainer.style.position = 'fixed';
+        toastContainer.style.bottom = '20px';
+        toastContainer.style.right = '20px';
+        toastContainer.style.zIndex = '1000';
+        document.body.appendChild(toastContainer);
+    }
+    
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.style.minWidth = '250px';
+    toast.style.margin = '10px';
+    toast.style.padding = '12px 16px';
+    toast.style.borderRadius = '4px';
+    toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+    toast.style.fontSize = '14px';
+    toast.style.fontWeight = '500';
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s, transform 0.3s';
+    toast.style.transform = 'translateY(20px)';
+    
+    // Set toast color based on type
+    if (type === 'success') {
+        toast.style.backgroundColor = '#28a745';
+        toast.style.color = 'white';
+    } else if (type === 'error') {
+        toast.style.backgroundColor = '#dc3545';
+        toast.style.color = 'white';
+    } else {
+        toast.style.backgroundColor = '#17a2b8';
+        toast.style.color = 'white';
+    }
+    
+    // Set toast content
+    toast.textContent = message;
+    
+    // Add toast to container
+    toastContainer.appendChild(toast);
+    
+    // Show toast with animation
+    setTimeout(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateY(0)';
+    }, 10);
+    
+    // Hide toast after 3 seconds
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(20px)';
+        
+        // Remove toast from DOM after animation completes
+        setTimeout(() => {
+            toastContainer.removeChild(toast);
+        }, 300);
+    }, 3000);
+}
+
+// Toggle a user's access - keep this for backward compatibility
+async function toggleUserAccess(username, allow, role) {
+    try {
+        await updateUserAccess(username, allow, role);
+    } catch (error) {
+        console.error('Error toggling user access:', error);
+        
+        const statusElement = document.getElementById('debug-status');
+        if (statusElement) {
+            statusElement.textContent = `Error: ${error.message}`;
+            statusElement.style.color = '#dc3545';
+        }
     }
 }
 
@@ -706,268 +1169,165 @@ function updateDebugInfo() {
     }
 }
 
-// Run the backfill operation to populate the central login database
+// Add a function to run the backfill process
 async function runBackfill() {
-    const statusElement = document.getElementById('backfill-status');
-    const backfillButton = document.getElementById('backfill-button');
+    const backfillStatus = document.getElementById('backfill-status');
     
-    // Disable the button during operation
-    backfillButton.disabled = true;
-    statusElement.textContent = 'Backfilling login database...';
-    statusElement.style.color = '#6c757d';
+    if (backfillStatus) {
+        backfillStatus.textContent = 'Running backfill operation...';
+        backfillStatus.style.color = '#6c757d';
+    }
+    
+    const authToken = getAuthToken();
     
     try {
-        const authToken = getAuthToken();
-        if (!authToken) {
-            throw new Error('No authentication token found. Please log in again.');
-        }
-        
-        // Call the backfill endpoint
-        let response;
-        try {
-            response = await fetch('/api/login-users/backfill', {
-                method: 'POST',
-                headers: {
-                    'authtoken': authToken
-                }
-            });
-        } catch (error) {
-            console.log('First fetch attempt failed, trying with timetagger prefix');
-            response = await fetch('/timetagger/api/login-users/backfill', {
-                method: 'POST',
-                headers: {
-                    'authtoken': authToken
-                }
-            });
-        }
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
-        }
-        
-        const data = await response.json();
-        console.log('Backfill result:', data);
-        
-        // Show success message with detailed information
-        statusElement.textContent = `Backfill completed successfully. Processed ${data.details.success_count + data.details.error_count} users (${data.details.success_count} succeeded, ${data.details.error_count} failed).`;
-        statusElement.style.color = '#28a745';
-        
-        // Wait a moment before reloading users to ensure database updates are complete
-        setTimeout(async () => {
-            // Try to fetch from the new API endpoint to verify it's working
-            let verifyResponse;
-            try {
-                verifyResponse = await fetch('/api/login-users', {
-                    headers: {
-                        'authtoken': authToken
-                    }
-                });
-                
-                if (verifyResponse.ok) {
-                    const verifyData = await verifyResponse.json();
-                    const userCount = (verifyData.login_users || []).length;
-                    
-                    if (userCount > 0) {
-                        statusElement.textContent += ` Central database now contains ${userCount} users.`;
-                    } else {
-                        statusElement.textContent += " Central database appears to be empty despite backfill.";
-                        statusElement.style.color = '#ffc107'; // Warning color
-                    }
-                } else {
-                    statusElement.textContent += " Unable to verify central database contents.";
-                    statusElement.style.color = '#ffc107'; // Warning color
-                }
-            } catch (error) {
-                console.error('Error verifying central database:', error);
-            }
-            
-            // Reload users
-            await loadUsers();
-        }, 1000);
-        
-    } catch (error) {
-        console.error('Error running backfill:', error);
-        statusElement.textContent = `Error: ${error.message}`;
-        statusElement.style.color = '#dc3545';
-    } finally {
-        // Re-enable the button
-        backfillButton.disabled = false;
-    }
-}
-
-// Toggle debug information
-function toggleDebugInfo() {
-    const debugPanel = document.getElementById('debug-panel');
-    if (debugPanel.style.display === 'none') {
-        debugPanel.style.display = 'block';
-        // Refresh debug info when panel is shown
-        fetchDebugData();
-    } else {
-        debugPanel.style.display = 'none';
-    }
-}
-
-// Fetch additional debug data
-async function fetchDebugData() {
-    const debugInfoElement = document.getElementById('debug-info');
-    
-    if (!debugInfoElement) return;
-    
-    debugInfoElement.textContent = 'Loading debug information...';
-    
-    try {
-        const authToken = getAuthToken();
-        if (!authToken) {
-            throw new Error('No authentication token found.');
-        }
-        
-        // Try to check login database directly
-        const debugData = {
-            timestamp: new Date().toISOString(),
-            tokensInLocalStorage: {
-                auth_token: !!localStorage.getItem('timetagger_auth_token'),
-                webtoken_azure: !!localStorage.getItem('timetagger_webtoken_azure'),
-                user_info: localStorage.getItem('timetagger_user_info') 
-                    ? JSON.parse(localStorage.getItem('timetagger_user_info'))
-                    : null
-            }
-        };
-        
-        // Add to global debug info
-        debugInfo.localStorageTokens = debugData.tokensInLocalStorage;
-        debugInfo.tokenTimestamp = debugData.timestamp;
-        
-        // Update debug panel
-        updateDebugInfo();
-        
-        // Add debug information to the content area as well
-        const debugContent = document.getElementById('debug-content');
-        if (debugContent) {
-            const userInfo = localStorage.getItem('timetagger_user_info');
-            const parsedUserInfo = userInfo ? JSON.parse(userInfo) : null;
-            
-            let html = '<h4>Local Storage Data</h4>';
-            html += '<pre>' + JSON.stringify(debugData, null, 2) + '</pre>';
-            
-            if (parsedUserInfo) {
-                html += '<h4>Current User Info</h4>';
-                html += '<pre>' + JSON.stringify(parsedUserInfo, null, 2) + '</pre>';
-            }
-            
-            debugContent.innerHTML += html;
-        }
-        
-    } catch (error) {
-        console.error('Error fetching debug data:', error);
-        debugInfoElement.textContent = `Error fetching debug data: ${error.message}`;
-    }
-}
-
-// Add a new function to manually trigger an Azure user login test
-async function testAzureLogin() {
-    const statusElement = document.getElementById('test-status');
-    statusElement.textContent = 'Testing Azure user recording...';
-    statusElement.style.color = '#6c757d';
-    
-    try {
-        const authToken = getAuthToken();
-        if (!authToken) {
-            throw new Error('No authentication token found. Please log in again.');
-        }
-        
-        // First try to get current user info
-        const userInfo = localStorage.getItem('timetagger_user_info');
-        
-        if (!userInfo) {
-            throw new Error('No user info found in local storage');
-        }
-        
-        const user = JSON.parse(userInfo);
-        
-        // Determine if this is an Azure login by checking localStorage
-        const isAzureUser = !!localStorage.getItem('timetagger_webtoken_azure');
-        
-        // Show user info
-        const userData = {
-            username: user.username || '',
-            email: prompt('Enter email address for test Azure user:', user.email || user.username || ''),
-            isAzureUser: isAzureUser,
-            localStorageTokens: {
-                auth_token: !!localStorage.getItem('timetagger_auth_token'),
-                webtoken_azure: !!localStorage.getItem('timetagger_webtoken_azure')
-            }
-        };
-        
-        if (!userData.email) {
-            throw new Error('Email is required');
-        }
-        
-        statusElement.textContent = `Testing with user: ${userData.username} (${userData.email}) - Azure user: ${isAzureUser}`;
-        
-        // Create both a manual test record and also force a database check
-        const user_type = isAzureUser ? 'azure' : 'local';
-        
-        // Call the manual test endpoint
-        const response = await fetch('/api/v2/users/record_login_test', {
+        const response = await fetch('/api/v2/users/backfill', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'authtoken': authToken
-            },
-            body: JSON.stringify({
-                email: userData.email,
-                username: userData.username,
-                user_type: user_type,
-                role: 'user',
-                is_allowed: true,
-                metadata: {
-                    auth_method: isAzureUser ? 'azure' : 'local',
-                    test_initiated: true,
-                    timestamp: new Date().toISOString(),
-                    localStorage: userData.localStorageTokens
-                }
-            })
+            }
         });
         
-        if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+        if (response.ok) {
+            const result = await response.json();
+            console.log('Backfill result:', result);
+            
+            if (backfillStatus) {
+                if (result.success) {
+                    const successCount = result.details?.success_count || 0;
+                    const errorCount = result.details?.error_count || 0;
+                    const totalProcessed = successCount + errorCount;
+                    
+                    backfillStatus.textContent = `Backfill completed successfully. Processed ${totalProcessed} users (${successCount} succeeded, ${errorCount} failed).`;
+                    backfillStatus.style.color = '#28a745';
+                } else {
+                    backfillStatus.textContent = result.message || 'Backfill completed with unknown result.';
+                    backfillStatus.style.color = '#ffc107';
+                }
+            }
+            
+            // Reload users to show any newly backfilled users
+            setTimeout(loadUsers, 1000);
+        } else {
+            const errorText = await response.text();
+            console.error('Error running backfill:', errorText);
+            
+            if (backfillStatus) {
+                backfillStatus.textContent = `Error: ${response.status} - ${errorText}`;
+                backfillStatus.style.color = '#dc3545';
+            }
+        }
+    } catch (error) {
+        console.error('Error running backfill:', error);
+        
+        if (backfillStatus) {
+            backfillStatus.textContent = `Error: ${error.message}`;
+            backfillStatus.style.color = '#dc3545';
+        }
+    }
+}
+
+// Add a debug toggle function
+function toggleDebugInfo() {
+    const debugPanel = document.getElementById('debug-panel');
+    const debugStatus = document.getElementById('debug-status');
+    
+    if (!debugPanel) {
+        console.error('Debug panel not found');
+        return;
+    }
+    
+    const isVisible = debugPanel.style.display !== 'none';
+    
+    if (isVisible) {
+        // Hide the panel
+        debugPanel.style.display = 'none';
+        if (debugStatus) {
+            debugStatus.textContent = 'Debug information hidden';
+            debugStatus.style.color = '#6c757d';
+        }
+    } else {
+        // Show the panel and fetch data
+        debugPanel.style.display = 'block';
+        if (debugStatus) {
+            debugStatus.textContent = 'Debug information visible';
+            debugStatus.style.color = '#28a745';
         }
         
-        const data = await response.json();
-        console.log('Test login record result:', data);
+        // Fetch debug data
+        fetchDebugData();
+    }
+}
+
+// Fetch debug data for display
+async function fetchDebugData() {
+    const debugInfoElement = document.getElementById('debug-info');
+    const debugContent = document.getElementById('debug-content');
+    
+    if (!debugInfoElement) {
+        console.error('Debug info element not found');
+        return;
+    }
+    
+    debugInfoElement.textContent = 'Loading debug information...';
+    
+    // Add current debug information
+    let debugOutput = JSON.stringify(debugInfo, null, 2);
+    
+    // Add local storage token information
+    let tokenInfo = {
+        auth_token: !!localStorage.getItem('timetagger_auth_token'),
+        user_info: localStorage.getItem('timetagger_user_info'),
+        webtoken_azure: !!localStorage.getItem('timetagger_webtoken_azure')
+    };
+    
+    debugInfo.localStorageInfo = tokenInfo;
+    
+    // Update the debug info display
+    debugInfoElement.textContent = JSON.stringify(debugInfo, null, 2);
+    
+    if (debugContent) {
+        // Add more debug content
+        let currentUserInfo = '';
+        try {
+            const userInfoJson = localStorage.getItem('timetagger_user_info');
+            if (userInfoJson) {
+                const userInfo = JSON.parse(userInfoJson);
+                currentUserInfo = `
+                    <div style="margin-top: 15px;">
+                        <h4>Current User Info</h4>
+                        <pre style="font-family: monospace; white-space: pre-wrap; background-color: #f8f9fa; padding: 15px; border-radius: 4px;">${JSON.stringify(userInfo, null, 2)}</pre>
+                    </div>
+                `;
+            }
+        } catch (e) {
+            currentUserInfo = `<p>Error parsing user info: ${e.message}</p>`;
+        }
         
-        // Show success message
-        statusElement.textContent = `Test login record created successfully for ${userData.username}. User type: ${user_type}`;
-        statusElement.style.color = '#28a745';
-        
-        // Reload users after a short delay
-        setTimeout(async () => {
-            await loadUsers();
-        }, 1000);
-        
-    } catch (error) {
-        console.error('Error testing Azure login:', error);
-        statusElement.textContent = `Error: ${error.message}`;
-        statusElement.style.color = '#dc3545';
+        debugContent.innerHTML = `
+            <div>
+                <h4>LocalStorage Data</h4>
+                <pre style="font-family: monospace; white-space: pre-wrap; background-color: #f8f9fa; padding: 15px; border-radius: 4px;">${JSON.stringify(tokenInfo, null, 2)}</pre>
+            </div>
+            ${currentUserInfo}
+        `;
     }
 }
 
 // Add a new button for debugging Azure users specifically
 async function debugAzureUsers() {
-    const debugPanel = document.getElementById('debug-panel');
-    const debugContent = document.getElementById('debug-content');
-    const statusElement = document.getElementById('test-status');
-    statusElement.textContent = 'Checking database for Azure users...';
-    statusElement.style.color = '#6c757d';
+    const debugStatus = document.getElementById('debug-status');
+    
+    if (debugStatus) {
+        debugStatus.textContent = 'Fetching Azure user debug information...';
+        debugStatus.style.color = '#6c757d';
+    }
+    
+    const authToken = getAuthToken();
     
     try {
-        const authToken = getAuthToken();
-        if (!authToken) {
-            throw new Error('No authentication token found. Please log in again.');
-        }
-        
-        // Call the debug endpoint
-        const response = await fetch('/api/v2/login-users/debug', {
+        const response = await fetch('/api/v2/users/debug-azure', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -975,133 +1335,44 @@ async function debugAzureUsers() {
             }
         });
         
-        if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
-        }
-        
-        const data = await response.json();
-        console.log('Debug Azure users result:', data);
-        
-        // Format the debug info
-        let htmlContent = '<h4>Azure User Debug Information</h4>';
-        
-        // Database info
-        htmlContent += `<h5>Database Information</h5>`;
-        htmlContent += `<p>Login DB exists: ${data.debug_info.login_db_exists}</p>`;
-        htmlContent += `<p>Login DB path: ${data.debug_info.login_db_path}</p>`;
-        
-        // Azure users
-        htmlContent += `<h5>Azure Users in Login Database (${data.debug_info.azure_users.length})</h5>`;
-        if (data.debug_info.azure_users.length > 0) {
-            htmlContent += '<ul>';
-            data.debug_info.azure_users.forEach(user => {
-                htmlContent += `<li><strong>${user.username}</strong> (${user.email}) - Role: ${user.role}, Allowed: ${user.is_allowed}</li>`;
-            });
-            htmlContent += '</ul>';
-        } else {
-            htmlContent += '<p>No Azure users found in the login database.</p>';
-        }
-        
-        // Local users
-        htmlContent += `<h5>Local Users in Login Database (${data.debug_info.local_users.length})</h5>`;
-        if (data.debug_info.local_users.length > 0) {
-            htmlContent += '<ul>';
-            data.debug_info.local_users.forEach(user => {
-                htmlContent += `<li><strong>${user.username}</strong> (${user.email}) - Role: ${user.role}, Allowed: ${user.is_allowed}</li>`;
-            });
-            htmlContent += '</ul>';
-        } else {
-            htmlContent += '<p>No local users found in the login database.</p>';
-        }
-        
-        // UserManager data
-        htmlContent += `<h5>UserManager Data</h5>`;
-        if (data.debug_info.user_manager_data) {
-            htmlContent += `<p>Local users: ${data.debug_info.user_manager_data.local_users.length}</p>`;
-            htmlContent += `<p>Azure users: ${data.debug_info.user_manager_data.azure_users.length}</p>`;
+        if (response.ok) {
+            const data = await response.json();
+            console.log('Azure users debug data:', data);
             
-            if (data.debug_info.user_manager_data.azure_users.length > 0) {
-                htmlContent += '<h6>Azure Users from UserManager:</h6><ul>';
-                data.debug_info.user_manager_data.azure_users.forEach(user => {
-                    htmlContent += `<li><strong>${user.username}</strong> - Is allowed: ${user.is_allowed}</li>`;
-                });
-                htmlContent += '</ul>';
+            // Show the debug panel if not already visible
+            const debugPanel = document.getElementById('debug-panel');
+            if (debugPanel) {
+                debugPanel.style.display = 'block';
+            }
+            
+            // Update the debug info display
+            const debugInfoElement = document.getElementById('debug-info');
+            if (debugInfoElement) {
+                debugInfoElement.textContent = JSON.stringify(data.debug_info, null, 2);
+            }
+            
+            if (debugStatus) {
+                const azureCount = data.debug_info?.azure_users?.length || 0;
+                const localCount = data.debug_info?.local_users?.length || 0;
+                
+                debugStatus.textContent = `Debug completed: Found ${azureCount} Azure users and ${localCount} local users in database.`;
+                debugStatus.style.color = '#28a745';
             }
         } else {
-            htmlContent += `<p>Error retrieving UserManager data: ${data.debug_info.user_manager_error || 'Unknown error'}</p>`;
+            const errorText = await response.text();
+            console.error('Error fetching Azure user debug data:', errorText);
+            
+            if (debugStatus) {
+                debugStatus.textContent = `Error: ${response.status} - ${errorText}`;
+                debugStatus.style.color = '#dc3545';
+            }
         }
-        
-        // Display in the debug panel
-        debugContent.innerHTML = htmlContent;
-        debugPanel.style.display = 'block';
-        
-        // Show success message
-        statusElement.textContent = `Azure user debug completed. Found ${data.debug_info.azure_users.length} Azure users in database.`;
-        statusElement.style.color = '#28a745';
-        
     } catch (error) {
         console.error('Error debugging Azure users:', error);
-        statusElement.textContent = `Error: ${error.message}`;
-        statusElement.style.color = '#dc3545';
-    }
-}
-
-// Toggle a user's access
-async function toggleUserAccess(username, allow) {
-    if (!username) {
-        console.error('Username is required to toggle access');
-        return;
-    }
-    
-    try {
-        const statusElement = document.getElementById('debug-status');
-        if (statusElement) {
-            statusElement.textContent = `Updating access for ${username}...`;
-            statusElement.style.color = '#6c757d';
-        }
         
-        const authToken = getAuthToken();
-        if (!authToken) {
-            throw new Error('No authentication token found. Please log in again.');
-        }
-        
-        // Call the API to update user access
-        const response = await fetch('/api/v2/users/update_access', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'authtoken': authToken
-            },
-            body: JSON.stringify({
-                username: username,
-                is_allowed: allow
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
-        }
-        
-        const data = await response.json();
-        
-        // Show success message
-        if (statusElement) {
-            statusElement.textContent = `Successfully ${allow ? 'enabled' : 'disabled'} access for ${username}`;
-            statusElement.style.color = '#28a745';
-        }
-        
-        // Reload users after a short delay
-        setTimeout(async () => {
-            await loadUsers();
-        }, 1000);
-        
-    } catch (error) {
-        console.error('Error toggling user access:', error);
-        
-        const statusElement = document.getElementById('debug-status');
-        if (statusElement) {
-            statusElement.textContent = `Error: ${error.message}`;
-            statusElement.style.color = '#dc3545';
+        if (debugStatus) {
+            debugStatus.textContent = `Error: ${error.message}`;
+            debugStatus.style.color = '#dc3545';
         }
     }
 }
@@ -1118,41 +1389,56 @@ function searchUsers() {
     }
     
     try {
-        // Get the user table
-        const tableContainer = document.getElementById('users-table-container');
-        const table = tableContainer.querySelector('table');
-        
-        if (!table) {
-            console.error('No user table found');
+        // Get the user items
+        const userList = document.querySelector('.user-list');
+        if (!userList) {
+            console.error('No user list found');
             return;
         }
         
-        // Get all rows except the header
-        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const userItems = Array.from(userList.querySelectorAll('.user-item'));
         
-        // Filter rows based on search term
-        rows.forEach(row => {
-            const username = row.cells[0].textContent.toLowerCase();
-            const email = row.cells[1].textContent.toLowerCase();
-            const role = row.cells[2].textContent.toLowerCase();
-            const userType = row.cells[3].textContent.toLowerCase();
+        // Skip the header
+        const listHeader = userList.querySelector('.list-header');
+        if (listHeader) {
+            userItems.shift();
+        }
+        
+        // Counter for matching users
+        let matchingUsers = 0;
+        
+        // Filter items based on search term
+        userItems.forEach(item => {
+            // Get user info from the item
+            const name = item.querySelector('.user-name').textContent.toLowerCase();
+            const email = item.querySelector('.user-email').textContent.toLowerCase();
+            const role = item.querySelector('select.role-select').value.toLowerCase();
+            const userType = item.querySelector('.user-type-badge').textContent.toLowerCase();
             
-            // If the search term is found in any of the fields, show the row
-            if (username.includes(searchTerm) || 
+            // If the search term is found in any of the fields, show the item
+            if (name.includes(searchTerm) || 
                 email.includes(searchTerm) || 
                 role.includes(searchTerm) || 
                 userType.includes(searchTerm)) {
-                row.style.display = '';
+                item.style.display = '';
+                matchingUsers++;
             } else {
-                row.style.display = 'none';
+                item.style.display = 'none';
             }
         });
         
         // Update header with filtered count
-        const header = tableContainer.querySelector('h3');
+        const usersSection = document.getElementById('users-section');
+        const header = usersSection.querySelector('h3');
         if (header) {
-            const visibleRows = rows.filter(row => row.style.display !== 'none').length;
-            header.textContent = `Users (${visibleRows} matching "${searchTerm}")`;
+            header.textContent = `Users (${matchingUsers} matching "${searchTerm}")`;
+        }
+        
+        // Show status message
+        const statusElement = document.getElementById('debug-status');
+        if (statusElement) {
+            statusElement.textContent = `Found ${matchingUsers} users matching "${searchTerm}"`;
+            statusElement.style.color = matchingUsers > 0 ? '#28a745' : '#dc3545';
         }
         
     } catch (error) {
@@ -1165,12 +1451,27 @@ function searchUsers() {
     }
 }
 
-// Clear the search input and show all users
+// Clear search and reload all users
 function clearSearch() {
     const searchInput = document.getElementById('search-input');
     searchInput.value = '';
     
-    // Reload all users
+    // Reset header text
+    const usersSection = document.getElementById('users-section');
+    const header = usersSection.querySelector('h3');
+    if (header) {
+        const tableContainer = document.getElementById('users-table-container');
+        const userList = tableContainer.querySelector('.user-list');
+        if (userList) {
+            const userItems = userList.querySelectorAll('.user-item');
+            if (userItems.length > 0) {
+                // Adjust for header item
+                header.textContent = `All Users (${userItems.length - 1} total)`;
+            }
+        }
+    }
+    
+    // Show all users
     loadUsers();
 }
 </script>

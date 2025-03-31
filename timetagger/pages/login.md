@@ -3,7 +3,7 @@
 
 <div id="login-form" style="padding: 2em; border: 1px solid #ccc; border-radius: 5px; max-width: 400px; margin: 2em auto;">
     <h2>Login</h2>
-    <p id="login-status" style="color: red;"></p>
+    <div id="login-status" style="color: red; margin-bottom: 15px; font-weight: bold; padding: 8px; border-radius: 4px;"></div>
 
     <div id="credential-login" style="margin-bottom: 1em;">
         <label for="username">Username:</label><br>
@@ -320,10 +320,41 @@ class AzureAuthHandler {
         console.log(`Status update (${type}): ${message}`);
         
         // Update the status element
-        const statusEl = document.getElementById('status');
+        const statusEl = document.getElementById('login-status');
         if (statusEl) {
+            // Clear previous styling
+            statusEl.style.backgroundColor = '';
+            statusEl.style.border = '';
+            statusEl.style.padding = '8px';
+            statusEl.style.borderRadius = '4px';
+            
+            // Apply styling based on message type
+            if (type === 'error') {
+                statusEl.style.color = 'white';
+                statusEl.style.backgroundColor = '#dc3545';
+                statusEl.style.border = '1px solid #c82333';
+            } else if (type === 'success') {
+                statusEl.style.color = 'white';
+                statusEl.style.backgroundColor = '#28a745';
+                statusEl.style.border = '1px solid #218838';
+            } else if (type === 'warning') {
+                statusEl.style.color = '#212529';
+                statusEl.style.backgroundColor = '#ffc107';
+                statusEl.style.border = '1px solid #e0a800';
+            } else {
+                statusEl.style.color = 'black';
+            }
+            
+            // Check for "Access denied" message and highlight it specially
+            if (message.includes('Access denied')) {
+                statusEl.style.color = 'white';
+                statusEl.style.backgroundColor = '#dc3545';
+                statusEl.style.border = '1px solid #c82333';
+                statusEl.style.fontWeight = 'bold';
+            }
+            
             statusEl.textContent = message;
-            statusEl.className = type;
+            statusEl.style.display = message ? 'block' : 'none';
         }
         
         // Update token status elements based on type
@@ -334,6 +365,9 @@ class AzureAuthHandler {
                 errorEl.style.display = 'block';
             }
         }
+        
+        // Validate tokens after status update
+        validateTokens();
     }
 }
 
@@ -371,6 +405,16 @@ window.addEventListener('load', async function() {
     const credentialLoginButton = document.getElementById('login-button');
     const azureLoginSection = document.getElementById('azure-login');
     const azureLoginButton = document.getElementById('azure-login-button');
+
+    // Check URL for error parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const error = urlParams.get('error');
+    const errorMsg = urlParams.get('error_msg');
+    
+    // Display error message if present in URL parameters
+    if (error || errorMsg) {
+        updateStatus(errorMsg || "Authentication failed: " + error, 'error');
+    }
 
     // Hide Azure section initially
     if(azureLoginSection) azureLoginSection.style.display = 'none';
@@ -696,8 +740,11 @@ async function handleLocalLogin() {
         const password = document.getElementById('local-password').value.trim();
         
         if (!username || !password) {
-            const statusEl = document.getElementById('status');
-            if (statusEl) statusEl.textContent = 'Please enter both username and password';
+            const statusEl = document.getElementById('login-status');
+            if (statusEl) {
+                statusEl.textContent = 'Please enter both username and password';
+                statusEl.style.color = 'red';
+            }
             return;
         }
         
@@ -721,7 +768,7 @@ async function handleLocalLogin() {
         if (!response.ok) {
             const errorText = await response.text();
             console.error(`Local authentication failed: ${errorText}`);
-            const statusEl = document.getElementById('status');
+            const statusEl = document.getElementById('login-status');
             if (statusEl) statusEl.textContent = 'Local authentication failed: Invalid credentials';
             return;
         }
@@ -740,13 +787,13 @@ async function handleLocalLogin() {
                 window.location.href = '/timetagger/app/';
             } else {
                 console.error('tools.set_auth_info_from_token not available');
-                const statusEl = document.getElementById('status');
+                const statusEl = document.getElementById('login-status');
                 if (statusEl) statusEl.textContent = 'Error storing authentication token';
             }
         }
     } catch (error) {
         console.error('Local login failed:', error);
-        const statusEl = document.getElementById('status');
+        const statusEl = document.getElementById('login-status');
         if (statusEl) statusEl.textContent = `Local login failed: ${error.message}`;
     }
 }
@@ -801,8 +848,40 @@ window.tools = window.tools || {
 // Helper function to update status messages
 function updateStatus(message, type = 'info') {
     const statusEl = document.getElementById('login-status');
-    statusEl.style.color = type === 'error' ? 'red' : type === 'success' ? 'green' : 'black';
+    
+    // Clear previous styling
+    statusEl.style.backgroundColor = '';
+    statusEl.style.border = '';
+    statusEl.style.padding = '8px';
+    statusEl.style.borderRadius = '4px';
+    
+    // Apply styling based on message type
+    if (type === 'error') {
+        statusEl.style.color = 'white';
+        statusEl.style.backgroundColor = '#dc3545';
+        statusEl.style.border = '1px solid #c82333';
+    } else if (type === 'success') {
+        statusEl.style.color = 'white';
+        statusEl.style.backgroundColor = '#28a745';
+        statusEl.style.border = '1px solid #218838';
+    } else if (type === 'warning') {
+        statusEl.style.color = '#212529';
+        statusEl.style.backgroundColor = '#ffc107';
+        statusEl.style.border = '1px solid #e0a800';
+    } else {
+        statusEl.style.color = 'black';
+    }
+    
+    // Check for "Access denied" message and highlight it specially
+    if (message.includes('Access denied')) {
+        statusEl.style.color = 'white';
+        statusEl.style.backgroundColor = '#dc3545';
+        statusEl.style.border = '1px solid #c82333';
+        statusEl.style.fontWeight = 'bold';
+    }
+    
     statusEl.textContent = message;
+    statusEl.style.display = message ? 'block' : 'none';
     
     // Validate tokens after status update
     validateTokens();
