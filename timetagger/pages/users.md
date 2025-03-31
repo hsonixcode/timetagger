@@ -13,12 +13,12 @@
 
     <div id="users-section" style="margin-bottom: 2em; background-color: white; padding: 1.5em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <h3 style="margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;">All Users</h3>
-        <div id="all-users-list" style="margin-top: 1em;">
+        <div id="users-table-container" style="margin-top: 1em;">
             Loading users...
         </div>
     </div>
 
-    <div id="admin-links" style="margin-top: 2em; background-color: white; padding: 1.5em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+    <div id="administration" style="margin-top: 2em; background-color: white; padding: 1.5em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <h3 style="margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;">Administration</h3>
         <ul style="padding-left: 20px; margin-top: 15px;">
             <li style="margin-bottom: 8px;"><a href="/timetagger/admin" style="color: #007bff; text-decoration: none;">Admin Dashboard</a></li>
@@ -26,22 +26,33 @@
             <li style="margin-bottom: 8px;"><button id="backfill-button" onclick="runBackfill()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Run Login Database Backfill</button></li>
             <li style="margin-bottom: 8px;"><button id="debug-button" onclick="toggleDebugInfo()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Toggle Debug Information</button></li>
             <li style="margin-bottom: 8px;"><button id="test-azure-button" onclick="testAzureLogin()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Test Azure User Recording</button></li>
-            <li style="margin-bottom: 8px;"><button id="debug-azure-users" class="list-group-item list-group-item-action" onclick="debugAzureUsers()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Debug Azure Users in Database</button></li>
+            <li style="margin-bottom: 8px;"><button id="debug-azure-users" onclick="debugAzureUsers()" style="background: none; border: none; color: #007bff; text-decoration: none; cursor: pointer; padding: 0; font: inherit; text-align: left;">Debug Azure Users in Database</button></li>
         </ul>
         <p id="backfill-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
         <p id="test-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
+        <p id="debug-status" style="margin-top: 10px; font-style: italic; color: #6c757d;"></p>
     </div>
     
     <!-- Debug Information Panel -->
     <div id="debug-panel" style="margin-top: 2em; background-color: white; padding: 1.5em; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: none;">
         <h3 style="margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px;">Debug Information</h3>
-        <div id="debug-output" style="font-family: monospace; white-space: pre-wrap; background-color: #f8f9fa; padding: 15px; border-radius: 4px; max-height: 400px; overflow-y: auto;">
-            Loading debug information...
+        <pre id="debug-info" style="font-family: monospace; white-space: pre-wrap; background-color: #f8f9fa; padding: 15px; border-radius: 4px; max-height: 400px; overflow-y: auto;">Loading debug information...</pre>
+        <div id="debug-content" style="margin-top: 20px;">
+            <!-- Debug content will be added here -->
         </div>
     </div>
 </div>
 
 <script>
+// Global variables
+let debugInfo = {
+    newApiResponse: { status: 'not called', data: null },
+    oldApiResponse: { status: 'not called', data: null },
+    azureUserCount: 0,
+    localUserCount: 0,
+    finalUserCount: 0
+};
+
 // Get auth token from localStorage
 function getAuthToken() {
     return localStorage.getItem('timetagger_auth_token');
@@ -356,15 +367,6 @@ async function loadUsers() {
     }
     
     const authToken = getAuthToken();
-    
-    // Initialize debug info
-    const debugInfo = {
-        newApiResponse: { status: 'not called', data: null },
-        oldApiResponse: { status: 'not called', data: null },
-        azureUserCount: 0,
-        localUserCount: 0,
-        finalUserCount: 0
-    };
     
     try {
         // First try to get users from the new API
@@ -807,11 +809,11 @@ function toggleDebugInfo() {
 
 // Fetch additional debug data
 async function fetchDebugData() {
-    const debugOutput = document.getElementById('debug-output');
+    const debugInfoElement = document.getElementById('debug-info');
     
-    if (!debugOutput) return;
+    if (!debugInfoElement) return;
     
-    debugOutput.textContent = 'Loading debug information...';
+    debugInfoElement.textContent = 'Loading debug information...';
     
     try {
         const authToken = getAuthToken();
@@ -831,11 +833,33 @@ async function fetchDebugData() {
             }
         };
         
+        // Add to global debug info
+        debugInfo.localStorageTokens = debugData.tokensInLocalStorage;
+        debugInfo.tokenTimestamp = debugData.timestamp;
+        
         // Update debug panel
         updateDebugInfo();
+        
+        // Add debug information to the content area as well
+        const debugContent = document.getElementById('debug-content');
+        if (debugContent) {
+            const userInfo = localStorage.getItem('timetagger_user_info');
+            const parsedUserInfo = userInfo ? JSON.parse(userInfo) : null;
+            
+            let html = '<h4>Local Storage Data</h4>';
+            html += '<pre>' + JSON.stringify(debugData, null, 2) + '</pre>';
+            
+            if (parsedUserInfo) {
+                html += '<h4>Current User Info</h4>';
+                html += '<pre>' + JSON.stringify(parsedUserInfo, null, 2) + '</pre>';
+            }
+            
+            debugContent.innerHTML += html;
+        }
+        
     } catch (error) {
         console.error('Error fetching debug data:', error);
-        debugOutput.textContent = `Error fetching debug data: ${error.message}`;
+        debugInfoElement.textContent = `Error fetching debug data: ${error.message}`;
     }
 }
 
@@ -1080,5 +1104,73 @@ async function toggleUserAccess(username, allow) {
             statusElement.style.color = '#dc3545';
         }
     }
+}
+
+// Search users based on the search input
+function searchUsers() {
+    const searchInput = document.getElementById('search-input');
+    const searchTerm = searchInput.value.trim().toLowerCase();
+    
+    if (!searchTerm) {
+        // If search term is empty, show all users
+        loadUsers();
+        return;
+    }
+    
+    try {
+        // Get the user table
+        const tableContainer = document.getElementById('users-table-container');
+        const table = tableContainer.querySelector('table');
+        
+        if (!table) {
+            console.error('No user table found');
+            return;
+        }
+        
+        // Get all rows except the header
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        
+        // Filter rows based on search term
+        rows.forEach(row => {
+            const username = row.cells[0].textContent.toLowerCase();
+            const email = row.cells[1].textContent.toLowerCase();
+            const role = row.cells[2].textContent.toLowerCase();
+            const userType = row.cells[3].textContent.toLowerCase();
+            
+            // If the search term is found in any of the fields, show the row
+            if (username.includes(searchTerm) || 
+                email.includes(searchTerm) || 
+                role.includes(searchTerm) || 
+                userType.includes(searchTerm)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        // Update header with filtered count
+        const header = tableContainer.querySelector('h3');
+        if (header) {
+            const visibleRows = rows.filter(row => row.style.display !== 'none').length;
+            header.textContent = `Users (${visibleRows} matching "${searchTerm}")`;
+        }
+        
+    } catch (error) {
+        console.error('Error searching users:', error);
+        const statusElement = document.getElementById('debug-status');
+        if (statusElement) {
+            statusElement.textContent = `Error searching: ${error.message}`;
+            statusElement.style.color = '#dc3545';
+        }
+    }
+}
+
+// Clear the search input and show all users
+function clearSearch() {
+    const searchInput = document.getElementById('search-input');
+    searchInput.value = '';
+    
+    // Reload all users
+    loadUsers();
 }
 </script>
