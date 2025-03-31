@@ -144,7 +144,7 @@ class AzureAuthHandler {
                 const response = await fetch('/timetagger/api/v2/token_exchange', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'content-type': 'application/json'
                     },
                     body: JSON.stringify(tokenData)
                 });
@@ -820,24 +820,45 @@ async function handleCredentialLogin(event) {
         return;
     }
     
-    const loginData = {
-        method: 'usernamepassword',
-        username: username,
-        password: password
-    };
-    
     try {
+        // Create auth info object
+        const authInfo = {
+            method: 'usernamepassword',
+            username: username,
+            password: password
+        };
+        
+        // Base64 encode the auth info - ensure proper UTF-8 encoding
+        const authInfoStr = JSON.stringify(authInfo);
+        const encoder = new TextEncoder();
+        const authInfoBytes = encoder.encode(authInfoStr);
+        const authInfoBase64 = btoa(String.fromCharCode.apply(null, authInfoBytes));
+        
+        console.log('Sending authentication request...');
         const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(loginData)
+            headers: {
+                'Accept': 'application/json'
+            },
+            body: authInfoBase64
         });
         
         if (!response.ok) {
-            throw new Error(`Login failed: ${response.statusText}`);
+            const errorText = await response.text();
+            console.error('Authentication failed:', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorText
+            });
+            throw new Error(`Authentication failed: ${errorText || response.statusText}`);
         }
         
         const data = await response.json();
+        if (!data.token) {
+            throw new Error('No token received in response');
+        }
+        
+        // Store the authentication token
         localStorage.setItem('timetagger_auth_token', data.token);
         localStorage.setItem('timetagger_auth_info', JSON.stringify({
             method: 'usernamepassword',
@@ -846,6 +867,8 @@ async function handleCredentialLogin(event) {
         
         updateStatus('Successfully logged in', 'success');
         validateTokens(); // Validate tokens after successful login
+        
+        // Redirect after a short delay
         setTimeout(() => {
             window.location.href = '/timetagger/app';
         }, 1000);

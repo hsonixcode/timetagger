@@ -65,7 +65,7 @@ class AzureAuth:
             response = await fetch(token_url, {
                 "method": "POST",
                 "headers": {
-                    "Content-Type": "application/x-www-form-urlencoded"
+                    "content-type": "application/x-www-form-urlencoded"
                 },
                 "body": window.dict2url(token_data)
             })
@@ -95,7 +95,7 @@ class AzureAuth:
             response = await fetch("/timetagger/api/v2/bootstrap_authentication", {
                 "method": "POST",
                 "headers": {
-                    "Content-Type": "application/json"
+                    "content-type": "application/json"
                 },
                 "body": JSON.stringify(auth_info)
             })
