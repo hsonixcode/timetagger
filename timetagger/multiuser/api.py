@@ -12,6 +12,7 @@ import time
 
 from .user import UserManager
 from .login_tracker import LoginTracker
+from .auth_utils import check_admin_status, invalidate_user_token, check_admin_status_sync
 
 logger = logging.getLogger("timetagger.multiuser")
 
@@ -159,7 +160,7 @@ async def backfill_login_database(request, auth_info) -> Tuple[int, Dict[str, st
 
 async def update_user_access(request, auth_info) -> Tuple[int, Dict[str, str], Dict[str, Any]]:
     """
-    API endpoint handler to update a user's access status.
+    API endpoint handler to update a user's access status and role.
     
     Args:
         request: The HTTP request object.
@@ -185,6 +186,7 @@ async def update_user_access(request, auth_info) -> Tuple[int, Dict[str, str], D
         # Validate request body
         username = body.get("username")
         is_allowed = body.get("is_allowed")
+        role = body.get("role")  # Optional role parameter
         
         if not username:
             return 400, {}, {"error": "Username is required"}
@@ -192,9 +194,14 @@ async def update_user_access(request, auth_info) -> Tuple[int, Dict[str, str], D
         if is_allowed is None:
             return 400, {}, {"error": "is_allowed is required"}
         
+        # Validate role if provided
+        valid_roles = ["user", "admin"]
+        if role and role not in valid_roles:
+            return 400, {}, {"error": f"Invalid role. Must be one of: {', '.join(valid_roles)}"}
+        
         # Update user access in the UserManager
         user_manager = UserManager()
-        result = await user_manager.update_user_access(username, is_allowed)
+        result = await user_manager.update_user_access(username, is_allowed, role)
         
         if not result:
             return 404, {}, {"error": f"User '{username}' not found"}
@@ -212,11 +219,11 @@ async def update_user_access(request, auth_info) -> Tuple[int, Dict[str, str], D
             user = login_tracker.get_login_by_email(email)
             
             if user:
-                # User exists in login database, update access status
+                # User exists in login database, update access status and role
                 user_data = {
                     "email": email,
                     "username": username,
-                    "role": user.get("role", "user"),
+                    "role": role or user.get("role", "user"),  # Use provided role or keep existing
                     "user_type": user.get("user_type", "local"),
                     "is_allowed": is_allowed,
                     "source_db": user.get("source_db", f"{username}.db"),
@@ -225,15 +232,21 @@ async def update_user_access(request, auth_info) -> Tuple[int, Dict[str, str], D
                 
                 # Record the update
                 await login_tracker.record_login(user_data)
-                logger.info(f"Updated access status in central login database for user {email}")
+                logger.info(f"Updated user in central login database: {email} (role: {user_data['role']}, access: {is_allowed})")
         except Exception as e:
             # Log error but continue (this is not critical)
-            logger.error(f"Error updating access status in central login database: {str(e)}")
+            logger.error(f"Error updating user in central login database: {str(e)}")
         
         # Return success message
+        response_message = f"User '{username}' updated successfully"
+        if role:
+            response_message += f" (role: {role}, access: {is_allowed})"
+        else:
+            response_message += f" (access: {is_allowed})"
+        
         return 200, {"content-type": "application/json"}, {
             "success": True,
-            "message": f"Access for user '{username}' updated successfully."
+            "message": response_message
         }
     except Exception as e:
         logger.error(f"Error updating user access: {str(e)}")
@@ -424,4 +437,57 @@ async def debug_azure_users(request, auth_info) -> Tuple[int, Dict[str, str], Di
         return 200, {"content-type": "application/json"}, {"debug_info": debug_info}
     except Exception as e:
         logger.error(f"Error in debug_azure_users: {str(e)}")
-        return 500, {}, {"error": f"Server error: {str(e)}"} 
+        return 500, {}, {"error": f"Server error: {str(e)}"}
+
+async def update_user_role(request, auth_info):
+    """Update a user's role in the login database.
+    
+    Args:
+        request: The HTTP request object
+        auth_info: The authentication info dictionary
+        
+    Returns:
+        tuple: (status_code, headers, response_body)
+    """
+    # Check if user is admin using the standardized check
+    is_admin, source = check_admin_status_sync(auth_info)
+    if not is_admin:
+        logger.warning(f"Non-admin user {auth_info.get('username')} attempted to update user role. Admin check source: {source}")
+        return 403, {}, {"error": "Only admin users can update user roles."}
+    
+    # Parse request body
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return 400, {}, {"error": "Invalid JSON in request body"}
+    
+    # Validate required fields
+    username = body.get("username")
+    role = body.get("role")
+    
+    if not username:
+        return 400, {}, {"error": "Username is required"}
+    
+    if not role:
+        return 400, {}, {"error": "Role is required"}
+    
+    if role not in ["admin", "user"]:
+        return 400, {}, {"error": "Role must be either 'admin' or 'user'"}
+    
+    # Update the user role in the login database
+    from .login_tracker import LoginTracker
+    tracker = LoginTracker()
+    
+    # Use the update_user_role method
+    success, message = await tracker.update_user_role(username, role)
+    
+    if not success:
+        logger.warning(f"Failed to update role: {message}")
+        return 404, {}, {"error": message}
+    
+    # If we're updating our own role, invalidate our token to reflect the change
+    if username == auth_info.get("username"):
+        invalidate_user_token(username)
+    
+    logger.info(f"User {username} role updated to {role} by admin {auth_info.get('username')}")
+    return 200, {}, {"success": True, "username": username, "role": role, "message": message} 

@@ -706,6 +706,8 @@ class BaseDataStore:
         # Sync stuff
         self._sync_timeout = None
         self._state_timeout = None
+        # Make sure is_read_only class is removed from body when initializing
+        window.document.body.classList.remove("is_read_only")
         self.reset()
         window.document.addEventListener(
             "visibilitychange", lambda: self.sync_soon(1.0), False
@@ -726,6 +728,9 @@ class BaseDataStore:
         # State that can be draw
         self.sync_time = 0, 0
         self.state = ""  # pending, sync, warning, error, ""
+        # Initialize is_read_only to False and remove class from body
+        self.is_read_only = False
+        window.document.body.classList.remove("is_read_only")
         # Sync stuff
         self._to_push = {"settings": {}, "records": {}}
         window.clearTimeout(self._sync_timeout)
@@ -797,26 +802,21 @@ class ConnectedDataStore(BaseDataStore):
         self._auth_cantuse = None
 
     def get_auth(self):
-        """Get an auth info object that is guaranteed to match the username
-        that the store had from the beginning. It gets automatically refreshed
-        to include the latest authtoken. Can return None, in which case the store is
-        not usable.
-        """
-        if dt.now() - self._last_auth_get > 1.0:
-            self._last_auth_get = dt.now()
-            auth = window.tools.get_auth_info()
-            if self._auth is None and auth:
-                pass  # This can't really happen. If it does, let user reload
-            elif auth and auth.username and auth.username == self._auth.username:
-                self._auth = auth
-            else:
-                self._auth = None
-            # Check if we've found the auth is not usable (e.g. expiration)
-            if self._auth:
-                if self._auth_cantuse:
-                    self._auth.cantuse = self._auth_cantuse
-
-        return self._auth
+        # Get auth info from local storage
+        try:
+            auth = tools.get_auth_info()
+            if not auth:
+                return None
+                
+            # Apply state
+            if self._auth_cantuse:
+                auth.cantuse = self._auth_cantuse
+                
+            # Return auth object with safety check
+            return auth
+        except Exception as err:
+            console.error("[stores.py] Error in get_auth:", err)
+            return None
 
     def _log_load(self, where, ob):
         n1, n2, n3 = len(ob.settings), len(ob.records)
@@ -936,12 +936,20 @@ class ConnectedDataStore(BaseDataStore):
                 if statusText.lower() == "readonly":
                     window.document.body.classList.add("is_read_only")
                     self.is_read_only = True
+                else:
+                    # Ensure is_read_only is not set for other notification types
+                    window.document.body.classList.remove("is_read_only")
+                    self.is_read_only = False
                 # Notify user
                 if window.canvas:
                     window.canvas.notify_once(text)
             console.warn(self.last_error)
 
         else:
+            # Success - ensure is_read_only is not set
+            window.document.body.classList.remove("is_read_only")
+            self.is_read_only = False
+            
             # Success, but it can still mean that some records failed. In this
             # case these records are likely corrupt, so we delete them, and
             # will get the server's version back when we pull.

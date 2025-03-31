@@ -349,24 +349,78 @@ class MenuDialog(BaseDialog):
     EXIT_ON_CLICK_OUTSIDE = True
     TRANSPARENT_BG = True
 
-    def __init__(self, canvas):
+    def __init__(self, canvas, title=None):
         super().__init__(canvas)
         self.canvas = canvas  # Explicitly store canvas reference
+        self.title = title
+        self.on_select = None  # Callback for when an item is selected
+        self._items = []  # Store menu items
 
-    def open(self):
-        """Show/open the dialog ."""
-        # Put the menu right next to the menu button
-        self.maindiv.style.top = "5px"
-        self.maindiv.style.left = "50px"
-        self.maindiv.style.maxWidth = "500px"
+    def set_items(self, menu_items):
+        """Set menu items for the dialog.
+        Each item is a tuple of (text, action, shortcut) where action is a string identifier.
+        """
+        try:
+            console.log("[MenuDialog] set_items called with", len(menu_items), "items")
+            self._items = menu_items
+            return True
+        except Exception as e:
+            console.error("[MenuDialog] Error in set_items:", e)
+            return False
 
-        self.maindiv.innerHTML = f"""
-            <div class='loggedinas'></div>
-        """.rstrip()
+    def open(self, callback=None):
+        """Show/open the dialog."""
+        try:
+            # Put the menu right next to the menu button
+            self.maindiv.style.top = "5px"
+            self.maindiv.style.left = "50px"
+            self.maindiv.style.maxWidth = "500px"
 
-        # Unpack
-        loggedinas = self.maindiv.children[0]
+            # Start with empty content
+            self.maindiv.innerHTML = ""
 
+            # Add title if provided
+            if self.title:
+                title_div = document.createElement("div")
+                title_div.className = "menu-title"
+                title_div.innerText = self.title
+                self.maindiv.appendChild(title_div)
+
+            # Add menu items if we have them
+            if hasattr(self, '_items') and self._items:
+                for item in self._items:
+                    if len(item) >= 2:
+                        text, action = item[0], item[1]
+                        shortcut = item[2] if len(item) >= 3 else None
+                        
+                        el = document.createElement("a")
+                        html = text
+                        if shortcut:
+                            html += f" <span class='keyhint'>{shortcut}</span>"
+                        el.innerHTML = html
+                        el.setAttribute("data-action", action)
+                        el.onclick = lambda e: self._handle_item_click(e.target.getAttribute("data-action"))
+                        self.maindiv.appendChild(el)
+            # Fall back to original menu implementation if no items are set
+            else:
+                self._show_default_menu()
+
+            self.maindiv.classList.add("verticalmenu")
+            super().open(callback)
+        except Exception as e:
+            console.error("[MenuDialog] Error in open:", e)
+
+    def _handle_item_click(self, action):
+        """Handle click on a menu item."""
+        try:
+            self.close()
+            if self.on_select and action:
+                self.on_select(action)
+        except Exception as e:
+            console.error("[MenuDialog] Error in _handle_item_click:", e)
+
+    def _show_default_menu(self):
+        """Show the default menu with standard options."""
         # Valid store?
         if window.store.get_auth:
             logged_in = store_valid = bool(window.store.get_auth())
@@ -376,16 +430,10 @@ class MenuDialog(BaseDialog):
 
         is_installable = window.pwa and window.pwa.deferred_prompt
 
-        # Determine if Azure AD seems configured (can check localStorage here or pass via a global var)
-        # Using localStorage for simplicity here, assuming config page saves there.
-        azure_configured = False
-        try:
-            if localStorage.getItem('timetagger_azure_client_id') and localStorage.getItem('timetagger_azure_tenant_id'):
-                azure_configured = True
-                console.log("MenuDialog: Azure AD seems configured via localStorage.")
-        except Exception as e:
-            console.error("MenuDialog: Error checking localStorage for Azure config:", e)
-
+        # Add login status info
+        loggedinas = document.createElement("div")
+        loggedinas.className = "loggedinas"
+        
         # Display sensible text in "header"
         if window.store.__name__.startswith("Demo"):
             text = "This is the Demo"
@@ -398,16 +446,7 @@ class MenuDialog(BaseDialog):
             else:
                 text = "Not signed in"
         loggedinas.innerText = text
-
-        whatsnew = "What's new"
-        whatsnew_url = "https://github.com/almarklein/timetagger/releases"
-        if window.timetaggerversion:
-            whatsnew += " in version " + window.timetaggerversion.lstrip("v")
-
-        container = self.maindiv
-        # Clear previous items if any
-        while container.lastChild and container.lastChild != loggedinas:
-             container.removeChild(container.lastChild)
+        self.maindiv.appendChild(loggedinas)
 
         # Define menu items
         menu_structure = [
@@ -417,9 +456,8 @@ class MenuDialog(BaseDialog):
             ("\uf56e", store_valid, "Export all records", self._export),
             (None, True, "User", None),
             ("\uf013", store_valid, "Settings", self._show_settings),
-            ("\uf233", logged_in, "Users", "/timetagger/users"), # Add Users menu item
-            ("\uf2bd", True, "Account", "/timetagger/account"), # Uncommented and updated link
-            # Add Configure External Auth Link - SHOW ONLY WHEN LOGGED IN
+            ("\uf233", logged_in, "Users", "/timetagger/users"),
+            ("\uf2bd", True, "Account", "/timetagger/account"),
             ("\uf0ad", logged_in, "Configure External Auth", "/timetagger/configure_external_auth"),
             ("\uf2f6", not logged_in, "Login", "/timetagger/login"),
             ("\uf2f5", logged_in, "Logout", self._logout),
@@ -436,7 +474,7 @@ class MenuDialog(BaseDialog):
                 el.setAttribute("class", "divider")
                 if title is not None:
                     el.innerHTML = title
-                container.appendChild(el)
+                self.maindiv.appendChild(el)
             else:
                 el = document.createElement("a")
                 html = ""
@@ -451,12 +489,7 @@ class MenuDialog(BaseDialog):
                     # Use a helper to create the click handler with correct scope
                     el.onclick = self._create_action_handler(func_or_url, title)
 
-                container.appendChild(el)
-
-        # more: Settings, User account, inport / export
-
-        self.maindiv.classList.add("verticalmenu")
-        super().open(None)
+                self.maindiv.appendChild(el)
 
     def _create_action_handler(self, func, title):
         """Helper function to create an onclick handler with correct scope."""

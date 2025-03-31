@@ -118,16 +118,36 @@ def get_public_auth_config() -> Dict:
     finally:
         session.close()
 
-def get_full_app_config(auth_info: dict) -> Dict:
+def get_full_app_config(auth_info: dict, bypass_admin_check: bool = False) -> Dict:
     """Get full application configuration including secrets.
-    Only accessible by admin users."""
+    Only accessible by admin users or internal system calls with bypass flag.
+    
+    Args:
+        auth_info: The authentication info dictionary
+        bypass_admin_check: If True, skip the admin check (for internal system operations)
+    
+    Returns:
+        Dict: The complete application configuration
+    """
     rate_limited_config_access()  # Apply rate limiting
     
-    # Verify admin access
-    if not auth_info.get('is_admin', False):
-        logger.warning("app_config.unauthorized_access",
-                      user=auth_info.get('username'))
-        raise AuthException("Only admin users can access full configuration")
+    # Skip admin check if bypass flag is set
+    if not bypass_admin_check:
+        # Use the synchronous admin check function
+        from timetagger.multiuser.auth_utils import check_admin_status_sync
+        
+        is_admin, source = check_admin_status_sync(auth_info)
+        
+        # Verify admin access
+        if not is_admin:
+            logger.warning("app_config.unauthorized_access",
+                          user=auth_info.get('username'),
+                          source=source)
+            raise AuthException("Only admin users can access full configuration")
+        
+        logger.info(f"Admin access granted to {auth_info.get('username')} (source: {source})")
+    else:
+        logger.info("Admin check bypassed for system operation")
     
     try:
         session = Session()
@@ -175,8 +195,41 @@ def update_app_config(auth_info: dict, new_config: Dict) -> Dict:
     Only accessible by admin users."""
     rate_limited_config_access()  # Apply rate limiting
     
+    # Check if the user is an admin directly from auth_info
+    is_admin = auth_info.get('is_admin', False)
+    
+    # If not admin according to auth_info, check the JWT token if available
+    if not is_admin and 'token' in auth_info:
+        try:
+            import json
+            import base64
+            # Get the payload part of the JWT token
+            token_parts = auth_info['token'].split('.')
+            if len(token_parts) >= 2:
+                # Ensure correct padding for base64 decoding
+                payload_b64 = token_parts[1]
+                payload_b64 += '=' * (-len(payload_b64) % 4)
+                # Decode the payload and extract the is_admin flag
+                token_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                is_admin = token_payload.get('is_admin', False)
+                logger.info(f"Admin check from JWT token: {is_admin}")
+        except Exception as e:
+            logger.error(f"Error extracting admin status from token: {str(e)}")
+    
+    # Also check for admin role in the database for Azure users
+    if not is_admin and auth_info.get('username'):
+        from timetagger.multiuser.login_tracker import LoginTracker
+        try:
+            tracker = LoginTracker()
+            user = tracker.get_login_by_email(auth_info.get('username'))
+            if user and user.get('role') == 'admin':
+                is_admin = True
+                logger.info(f"Admin check from database: user {auth_info.get('username')} has admin role")
+        except Exception as e:
+            logger.error(f"Error checking admin role from database: {str(e)}")
+    
     # Verify admin access
-    if not auth_info.get('is_admin', False):
+    if not is_admin:
         logger.warning("app_config.unauthorized_update",
                       user=auth_info.get('username'))
         raise AuthException("Only admin users can update configuration")

@@ -336,6 +336,60 @@ class LoginTracker:
             logger.error(f"Error during backfill: {str(e)}")
             return 0, 0
     
+    async def update_user_role(self, username_or_email: str, new_role: str) -> Tuple[bool, str]:
+        """
+        Update a user's role in the login database.
+        
+        Args:
+            username_or_email: The username or email of the user to update
+            new_role: The new role to assign to the user
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        try:
+            if new_role not in ("admin", "user"):
+                return False, f"Invalid role: {new_role}. Must be 'admin' or 'user'."
+                
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            
+            # Try to find the user by email first
+            cursor.execute("SELECT id, email, role FROM login_users WHERE email = ?", (username_or_email,))
+            user = cursor.fetchone()
+            
+            # If not found by email, try by username
+            if not user:
+                cursor.execute("SELECT id, email, role FROM login_users WHERE username = ?", (username_or_email,))
+                user = cursor.fetchone()
+            
+            if not user:
+                conn.close()
+                return False, f"User not found: {username_or_email}"
+            
+            user_id, user_email, current_role = user
+            
+            # No change needed if the role is already set
+            if current_role == new_role:
+                conn.close()
+                return True, f"User {user_email} already has role '{new_role}'"
+            
+            # Update the user's role
+            cursor.execute(
+                "UPDATE login_users SET role = ? WHERE id = ?",
+                (new_role, user_id)
+            )
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Updated role for user {user_email} from '{current_role}' to '{new_role}'")
+            return True, f"Successfully updated user {user_email} from '{current_role}' to '{new_role}'"
+            
+        except Exception as e:
+            logger.error(f"Error updating role for user {username_or_email}: {str(e)}")
+            return False, f"Error updating role: {str(e)}"
+    
     def record_login_sync(self, user_data: Dict[str, Any]) -> bool:
         """
         Synchronous version of record_login for use in backfill.

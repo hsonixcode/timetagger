@@ -88,10 +88,21 @@ class AzureAuth:
             auth_info = {
                 "method": "azure",
                 "username": username,
-                "access_token": tokens["access_token"]
+                "access_token": tokens["access_token"],
+                "id_token": tokens["id_token"]  # Include ID token for better verification on server
             }
             
-            console.log("Attempting to fetch TimeTagger webtoken using Azure token")
+            console.log("Attempting to fetch TimeTagger webtoken using Azure tokens")
+            
+            # Log masked tokens for debugging
+            console.log("Auth info being sent (username):", auth_info["username"])
+            if auth_info["access_token"]:
+                masked_access = auth_info["access_token"][:10] + "..."
+                console.log("Auth info being sent (access_token):", masked_access)
+            if auth_info["id_token"]:
+                masked_id = auth_info["id_token"][:10] + "..."
+                console.log("Auth info being sent (id_token):", masked_id)
+            
             response = await fetch("/timetagger/api/v2/bootstrap_authentication", {
                 "method": "POST",
                 "headers": {
@@ -101,10 +112,23 @@ class AzureAuth:
             })
             
             if not response.ok:
-                raise Error(f"Failed to get TimeTagger token: {await response.text()}")
+                error_text = await response.text()
+                console.error("Failed to get TimeTagger token:", error_text)
+                raise Error(f"Failed to get TimeTagger token: {error_text}")
                 
             tt_token = await response.json()
-            window.tools.set_auth_info_from_token(tt_token["token"])
+            console.log("Received TimeTagger token response:", tt_token)
+            
+            if not tt_token["token"]:
+                raise Error("No token in response from server")
+                
+            # Call set_auth_info_from_token and store the result
+            auth_result = window.tools.set_auth_info_from_token(tt_token["token"])
+            
+            # Check if we got a valid result back
+            if not auth_result:
+                console.error("set_auth_info_from_token failed to return auth info")
+                raise Error("Failed to process TimeTagger token")
             
             console.log("Successfully obtained TimeTagger token, redirecting to app")
             location.href = "/timetagger/app/"

@@ -27,6 +27,7 @@ import base64
 from base64 import b64decode
 from importlib import resources
 import jinja2
+import time
 
 import bcrypt
 import asgineer
@@ -46,9 +47,13 @@ from timetagger.server import (
 import httpx
 
 # Import our multiuser API handlers - change from relative to absolute import
-from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, debug_azure_users
+from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, debug_azure_users, update_user_role
 # Import the api module properly for function calls
 from timetagger.multiuser import api
+
+# Import the check_admin_status_sync function
+from timetagger.multiuser.auth_utils import check_admin_status_sync
+from timetagger.server.config_api import get_full_app_config, update_app_config
 
 # Special hooks exit early
 if __name__ == "__main__" and len(sys.argv) >= 2:
@@ -149,8 +154,8 @@ async def main_handler(request):
     if path == "api/v2/public_auth_config":
         from .server.config_api import get_public_auth_config
         try:
-            config = get_public_auth_config()
-            return 200, {}, config
+            auth_config = get_public_auth_config()
+            return 200, {}, auth_config
         except Exception as e:
             logger.error("public_auth_config.handler_error",
                         error=str(e),
@@ -172,11 +177,12 @@ async def main_handler(request):
             token_data = await request.get_json()
             logger.info(f"Token exchange request data: {token_data}")
             
-            # Get Azure config from database (use full config to get client secret)
+            # Get Azure config from database with admin check bypassed
             from .server.config_api import get_full_app_config
-            # Create a mock admin auth_info to access full config
-            mock_admin_auth = {"is_admin": True}
-            azure_config = get_full_app_config(mock_admin_auth)
+            
+            # Pass bypass_admin_check=True to avoid admin checks during auth
+            mock_auth = {"username": "system"}  # Just for logging
+            azure_config = get_full_app_config(mock_auth, bypass_admin_check=True)
             logger.info(f"Retrieved Azure config (excluding secret)")
             
             if not azure_config.get('azure_auth_enabled'):
@@ -400,9 +406,31 @@ async def api_handler(request, path):
                 "details": str(e)
             }
     
+    # Handle public_auth_config endpoint
+    if path == "public_auth_config":
+        from .server.config_api import get_public_auth_config
+        
+        try:
+            auth_config = get_public_auth_config()
+            return 200, {"content-type": "application/json"}, auth_config
+        except Exception as e:
+            logger.error("public_auth_config.handler_error",
+                        error=str(e),
+                        error_type=type(e).__name__)
+            return 500, {"content-type": "application/json"}, {
+                "error": "Internal server error",
+                "details": str(e)
+            }
+    
     # Authenticate and get user db for protected endpoints
     try:
         auth_info, db = await authenticate(request)
+        
+        # Include the token in auth_info to allow for token-based admin check
+        token = request.headers.get("authtoken", "")
+        if token and "token" not in auth_info:
+            auth_info["token"] = token
+            
         # Only validate if proxy auth is enabled
         if config.proxy_auth_enabled:
             await validate_auth(request, auth_info)
@@ -440,9 +468,9 @@ async def api_handler_triage(request, path, auth_info, db):
     elif path == 'login-users':
         return await get_login_users(request, auth_info)
     elif path == 'users/update-role':
-        # This endpoint doesn't exist in our API, return a 501 Not Implemented
-        logger.warning(f"Update role endpoint called but not implemented")
-        return 501, {}, {"error": "Not implemented: users/update-role endpoint"}
+        # Use the new update_user_role function
+        from timetagger.multiuser.api import update_user_role
+        return await update_user_role(request, auth_info)
     elif path == 'users/update-access':
         return await update_user_access(request, auth_info)
     elif path == 'users/debug-azure':
@@ -456,22 +484,34 @@ async def api_handler_triage(request, path, auth_info, db):
         from timetagger.server.config_api import update_azure_config
         return await update_azure_config(request, auth_info)
     elif path == 'app_config':
-        from timetagger.server.config_api import get_full_app_config, update_app_config
-        if request.method.upper() == 'GET':
-            config = get_full_app_config(auth_info)
-            return 200, {"content-type": "application/json"}, config
-        elif request.method.upper() == 'POST':
+        if method == "GET":
+            # Use the synchronous check_admin_status_sync function
+            is_admin, source = check_admin_status_sync(auth_info)
+            if not is_admin:
+                logger.warning(f"Authentication error: Only admin users can access full configuration. Admin check source: {source}")
+                return 403, {}, {"error": "Only admin users can access full configuration."}
+            logger.info(f"Served app_config to admin user {auth_info.get('username')}. Admin check source: {source}")
+            app_config = get_full_app_config(auth_info)
+            return 200, {}, app_config
+        elif method == "POST":
+            # Use the synchronous check_admin_status_sync function
+            is_admin, source = check_admin_status_sync(auth_info)
+            if not is_admin:
+                logger.warning(f"Authentication error: Only admin users can update configuration. Admin check source: {source}")
+                return 403, {}, {"error": "Only admin users can update configuration."}
+            logger.info(f"Updating app_config by admin user {auth_info.get('username')}. Admin check source: {source}")
+            
             try:
-                new_config = await request.get_json()
-                updated_config = update_app_config(auth_info, new_config)
-                return 200, {"content-type": "application/json"}, updated_config
-            except ValueError as e:
-                return 400, {"content-type": "application/json"}, {"error": str(e)}
+                body = await request.json()
+            except json.JSONDecodeError:
+                return 400, {}, {"error": "Invalid JSON in request body"}
+                
+            try:
+                update_app_config(auth_info, body)
+                return 200, {}, {"success": True}
             except Exception as e:
-                logger.error(f"Error updating app_config: {str(e)}")
-                return 500, {"content-type": "application/json"}, {"error": str(e)}
-        else:
-            return 405, {"content-type": "application/json"}, {"error": "Method not allowed"}
+                logger.error(f"Error updating app_config: {e}")
+                return 500, {}, {"error": str(e)}
     # Data API endpoints
     elif path.startswith('data/'):
         # Strip 'data/' part
@@ -537,10 +577,93 @@ async def get_webtoken_azure(request, auth_info):
     # Check if we have a username and access token (from client-side token exchange)
     username = auth_info.get("username", "").strip()
     access_token = auth_info.get("access_token", "").strip()
+    id_token = auth_info.get("id_token", "").strip()
     
     if username and access_token:
         logger.info(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
         print(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
+        
+        # Validate the ID token if provided
+        if id_token:
+            try:
+                # Decode the token
+                id_token_parts = id_token.split('.')
+                # Ensure correct padding for base64 decoding
+                payload_b64 = id_token_parts[1]
+                payload_b64 += '=' * (-len(payload_b64) % 4) 
+                id_token_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+                
+                # Make id_token_payload available to the surrounding scope for later use
+                # Store in a variable at the wider scope
+                token_payload = id_token_payload
+                
+                # Log the token payload for debugging
+                logger.info(f"[get_webtoken_azure] ID token payload: {json.dumps(id_token_payload)[:500]}...")
+                
+                # Check token expiration but only log warnings
+                exp = id_token_payload.get("exp", 0)
+                current_time = int(time.time())
+                if exp < current_time:
+                    logger.warning(f"[get_webtoken_azure] ID token appears expired: exp={exp}, current={current_time}")
+                    logger.warning(f"[get_webtoken_azure] Expiration date: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))}")
+                    logger.warning(f"[get_webtoken_azure] Current date: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_time))}")
+                    logger.warning(f"[get_webtoken_azure] Continuing anyway for diagnostic purposes")
+                else:
+                    logger.info(f"[get_webtoken_azure] ID token expiration valid: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp))}")
+                
+                # Verify username matches but only log
+                token_username = id_token_payload.get("preferred_username") or id_token_payload.get("email")
+                if token_username and token_username.lower() != username.lower():
+                    logger.warning(f"[get_webtoken_azure] Username mismatch in ID token: {token_username} vs {username}")
+                    logger.warning(f"[get_webtoken_azure] Continuing anyway for diagnostic purposes")
+                else:
+                    logger.info(f"[get_webtoken_azure] ID token username matches: {token_username}")
+                
+                logger.info(f"[get_webtoken_azure] ID token validation completed")
+            except Exception as e:
+                logger.error(f"[get_webtoken_azure] ID token validation error: {str(e)}")
+                logger.error(f"[get_webtoken_azure] Continuing anyway for diagnostic purposes")
+        
+        # Validate the access token by making a request to MS Graph API
+        try:
+            logger.info(f"[get_webtoken_azure] Validating access token...")
+            async with httpx.AsyncClient() as client:
+                # Instead of immediately failing, capture the response for inspection
+                response = await client.get(
+                    "https://graph.microsoft.com/v1.0/me",
+                    headers={"Authorization": f"Bearer {access_token}"}
+                )
+                
+                # Log the full response for debugging
+                logger.info(f"[get_webtoken_azure] Microsoft Graph API response: Status={response.status_code}")
+                logger.info(f"[get_webtoken_azure] Response headers: {dict(response.headers)}")
+                logger.info(f"[get_webtoken_azure] Response body: {response.text[:200]}...")
+                
+                # Continue with the authentication process regardless of response status
+                # We'll still log warnings but not block authentication
+                if response.status_code != 200:
+                    logger.warning(f"[get_webtoken_azure] Non-200 response from Microsoft Graph API: {response.status_code}")
+                    logger.warning(f"[get_webtoken_azure] We're continuing anyway for diagnostic purposes")
+                else:
+                    # Get the user profile from the response if available
+                    try:
+                        profile = response.json()
+                        token_username = profile.get("userPrincipalName") or profile.get("mail")
+                        logger.info(f"[get_webtoken_azure] Profile username: {token_username}")
+                        
+                        # Log username comparison but don't block
+                        if token_username and token_username.lower() != username.lower():
+                            logger.warning(f"[get_webtoken_azure] Username mismatch: {token_username} vs {username}")
+                        else:
+                            logger.info(f"[get_webtoken_azure] Username match confirmed")
+                    except Exception as e:
+                        logger.warning(f"[get_webtoken_azure] Error parsing profile: {str(e)}")
+            
+            logger.info(f"[get_webtoken_azure] Token validation step completed")
+        except Exception as e:
+            # Log the error but continue the authentication flow
+            logger.error(f"[get_webtoken_azure] Token validation error (continuing): {str(e)}")
+            logger.error(f"[get_webtoken_azure] We're continuing anyway for diagnostic purposes")
         
         # First, check if the user is allowed to access the system
         try:
@@ -583,20 +706,49 @@ async def get_webtoken_azure(request, auth_info):
         
         # Check if this is the first user (admin)
         is_admin = False
-        if CREDENTIALS:
-            # If using credentials file, first user in credentials is admin
-            is_admin = username == list(CREDENTIALS.keys())[0]
-            logger.info(f"[get_webtoken_azure] Admin check based on credentials: {is_admin}")
-        else:
-            # If no credentials file, check if this is the first user in the database
-            try:
-                from timetagger.server._apiserver import get_all_usernames
-                usernames = await get_all_usernames()
-                is_admin = not usernames or username == usernames[0]
-                logger.info(f"[get_webtoken_azure] Admin check based on database: {is_admin}")
-            except Exception as e:
-                logger.error(f"[get_webtoken_azure] Error checking admin status: {e}")
-                is_admin = False
+        
+        # Check if user already exists in the database and their role
+        try:
+            from timetagger.multiuser.login_tracker import LoginTracker
+            tracker = LoginTracker()
+            existing_user = tracker.get_login_by_email(username)
+            
+            if existing_user and existing_user.get("role") == "admin":
+                # If user exists and has admin role, set is_admin = True
+                is_admin = True
+                logger.info(f"[get_webtoken_azure] User {username} has admin role in database")
+            elif CREDENTIALS:
+                # If using credentials file, first user in credentials is admin
+                is_admin = username == list(CREDENTIALS.keys())[0]
+                logger.info(f"[get_webtoken_azure] Admin check based on credentials: {is_admin}")
+            else:
+                # If no credentials file, check if this is the first user in the database
+                try:
+                    from timetagger.server._apiserver import get_all_usernames
+                    usernames = await get_all_usernames()
+                    is_admin = not usernames or username == usernames[0]
+                    logger.info(f"[get_webtoken_azure] Admin check based on database: {is_admin}")
+                except Exception as e:
+                    logger.error(f"[get_webtoken_azure] Error checking admin status: {e}")
+                    is_admin = False
+        except Exception as e:
+            logger.error(f"[get_webtoken_azure] Error checking role from database: {e}")
+            
+            # Fall back to original checks
+            if CREDENTIALS:
+                # If using credentials file, first user in credentials is admin
+                is_admin = username == list(CREDENTIALS.keys())[0]
+                logger.info(f"[get_webtoken_azure] Admin check based on credentials: {is_admin}")
+            else:
+                # If no credentials file, check if this is the first user in the database
+                try:
+                    from timetagger.server._apiserver import get_all_usernames
+                    usernames = await get_all_usernames()
+                    is_admin = not usernames or username == usernames[0]
+                    logger.info(f"[get_webtoken_azure] Admin check based on database: {is_admin}")
+                except Exception as e:
+                    logger.error(f"[get_webtoken_azure] Error checking admin status: {e}")
+                    is_admin = False
         
         # Generate TimeTagger token with proper admin status
         token = await get_webtoken_unsafe(username, is_admin=is_admin)
@@ -610,25 +762,67 @@ async def get_webtoken_azure(request, auth_info):
             # Create login record
             email = username  # For Azure users, username is typically the email
             tracker = LoginTracker()
+            
+            # Check if user already exists first to preserve their role
+            existing_user = tracker.get_login_by_email(email)
+            
+            # Prepare token metadata if available
+            token_metadata = {}
+            if 'token_payload' in locals():
+                token_metadata = {k: v for k, v in token_payload.items() 
+                                 if k in ["name", "given_name", "family_name"]}
+            
             user_data = {
                 "email": email,
                 "username": username,
-                "role": "admin" if is_admin else "user",
                 "user_type": "azure",
                 "is_allowed": True,  # Azure users are allowed by default
                 "source_db": f"{username}.db",
                 "metadata": {
                     "auth_method": "azure",
+                    "auth_flow": "token",
                     "access_token_present": bool(access_token)
                 }
             }
             
+            # Add token metadata if available
+            if token_metadata:
+                user_data["metadata"]["token_payload"] = token_metadata
+            
+            # Handle role preservation differently
+            # For existing users, always preserve their role
+            if existing_user:
+                # Preserve the existing role and is_allowed status
+                existing_role = existing_user.get("role")
+                if existing_role:
+                    user_data["role"] = existing_role
+                    logger.info(f"[get_webtoken_azure] Preserving existing role '{existing_role}' for user {email}")
+                else:
+                    # Default to admin if is_admin flag is set, otherwise user
+                    user_data["role"] = "admin" if is_admin else "user"
+                    logger.info(f"[get_webtoken_azure] Setting role to '{user_data['role']}' based on is_admin={is_admin}")
+                
+                # Check if there's existing allow/deny status we should preserve
+                existing_access = existing_user.get("access")
+                if existing_access == "not allowed":
+                    user_data["is_allowed"] = False
+                    logger.info(f"[get_webtoken_azure] Preserving existing access status 'not allowed' for user {email}")
+            else:
+                # New user - set based on is_admin flag
+                user_data["role"] = "admin" if is_admin else "user"
+                logger.info(f"[get_webtoken_azure] New user - setting role to '{user_data['role']}' based on is_admin={is_admin}")
+            
             # Record login asynchronously (don't block the authentication flow)
-            await tracker.record_login(user_data)
-            logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database")
+            try:
+                await tracker.record_login(user_data)
+                logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database (code flow)")
+            except Exception as login_err:
+                logger.error(f"[get_webtoken_azure] Error recording login (code flow): {login_err}")
+                # Continue authentication even if login recording fails
+        
         except Exception as e:
             # Log error but continue authentication flow
-            logger.error(f"[get_webtoken_azure] Error recording login: {e}")
+            logger.error(f"[get_webtoken_azure] Error recording login (code flow): {e}")
         
         return 200, {}, dict(token=token)
     
@@ -692,6 +886,25 @@ async def get_webtoken_azure(request, auth_info):
         payload_b64 += '=' * (-len(payload_b64) % 4) 
         id_token_payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         
+        # Validate the token expiration
+        exp = id_token_payload.get("exp", 0)
+        current_time = int(time.time())
+        if exp < current_time:
+            logger.error(f"[get_webtoken_azure] ID token expired: exp={exp}, current={current_time}")
+            return 401, {}, "Unauthorized: Azure AD token expired"
+            
+        # Check for required claims
+        required_claims = ["aud", "iss", "sub"]
+        missing_claims = [claim for claim in required_claims if claim not in id_token_payload]
+        if missing_claims:
+            logger.error(f"[get_webtoken_azure] ID token missing required claims: {missing_claims}")
+            return 401, {}, "Unauthorized: Invalid ID token (missing claims)"
+        
+        # Verify audience matches our client ID
+        if id_token_payload.get("aud") != azure_client_id:
+            logger.error(f"[get_webtoken_azure] ID token audience mismatch: {id_token_payload.get('aud')} vs {azure_client_id}")
+            return 401, {}, "Unauthorized: Invalid token audience"
+        
         username = id_token_payload.get("preferred_username") or id_token_payload.get("email")
         if not username:
             logger.error("No username or email found in ID token")
@@ -702,9 +915,24 @@ async def get_webtoken_azure(request, auth_info):
         return 403, {}, f"forbidden: Failed to extract user info from token: {str(e)}"
 
     # Return the webtoken for Azure AD user - Set is_admin to False
-    token = await get_webtoken_unsafe(username, is_admin=False)
-    logger.info("Successfully generated TimeTagger token (via code flow)")
-    print(f"[get_webtoken_azure] Generated token (via code flow): {token[:10]}...")
+    is_admin = False
+    
+    # Check if user already exists in the database and check their role
+    try:
+        from timetagger.multiuser.login_tracker import LoginTracker
+        tracker = LoginTracker()
+        existing_user = tracker.get_login_by_email(username)
+        
+        if existing_user and existing_user.get("role") == "admin":
+            # If user exists and has admin role, set is_admin = True
+            is_admin = True
+            logger.info(f"[get_webtoken_azure] Code flow: User {username} has admin role in database")
+    except Exception as e:
+        logger.error(f"[get_webtoken_azure] Code flow: Error checking role from database: {e}")
+        
+    token = await get_webtoken_unsafe(username, is_admin=is_admin)
+    logger.info(f"Successfully generated TimeTagger token (via code flow, admin: {is_admin})")
+    print(f"[get_webtoken_azure] Generated token (via code flow): {token[:10]}... (admin: {is_admin})")
     
     # Record the login in the central database
     try:
@@ -713,23 +941,63 @@ async def get_webtoken_azure(request, auth_info):
         # Create login record
         email = username  # For Azure users, username is typically the email
         tracker = LoginTracker()
+        
+        # Check if user already exists first to preserve their role
+        existing_user = tracker.get_login_by_email(email)
+        
+        # Prepare token metadata if available
+        token_metadata = {}
+        if 'token_payload' in locals():
+            token_metadata = {k: v for k, v in token_payload.items() 
+                             if k in ["name", "given_name", "family_name"]}
+        
         user_data = {
             "email": email,
             "username": username,
-            "role": "user",  # Default to regular user for code flow
             "user_type": "azure",
             "is_allowed": True,  # Azure users are allowed by default
             "source_db": f"{username}.db",
             "metadata": {
                 "auth_method": "azure",
-                "auth_flow": "code",
-                "token_payload": {k: v for k, v in id_token_payload.items() if k in ["name", "given_name", "family_name"]}
+                "auth_flow": "token",
+                "access_token_present": bool(access_token)
             }
         }
         
+        # Add token metadata if available
+        if token_metadata:
+            user_data["metadata"]["token_payload"] = token_metadata
+        
+        # Handle role preservation differently
+        # For existing users, always preserve their role
+        if existing_user:
+            # Preserve the existing role and is_allowed status
+            existing_role = existing_user.get("role")
+            if existing_role:
+                user_data["role"] = existing_role
+                logger.info(f"[get_webtoken_azure] Preserving existing role '{existing_role}' for user {email}")
+            else:
+                # Default to admin if is_admin flag is set, otherwise user
+                user_data["role"] = "admin" if is_admin else "user"
+                logger.info(f"[get_webtoken_azure] Setting role to '{user_data['role']}' based on is_admin={is_admin}")
+            
+            # Check if there's existing allow/deny status we should preserve
+            existing_access = existing_user.get("access")
+            if existing_access == "not allowed":
+                user_data["is_allowed"] = False
+                logger.info(f"[get_webtoken_azure] Preserving existing access status 'not allowed' for user {email}")
+        else:
+            # New user - set based on is_admin flag
+            user_data["role"] = "admin" if is_admin else "user"
+            logger.info(f"[get_webtoken_azure] New user - setting role to '{user_data['role']}' based on is_admin={is_admin}")
+        
         # Record login asynchronously (don't block the authentication flow)
-        await tracker.record_login(user_data)
-        logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database (code flow)")
+        try:
+            await tracker.record_login(user_data)
+            logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database (code flow)")
+        except Exception as login_err:
+            logger.error(f"[get_webtoken_azure] Error recording login (code flow): {login_err}")
+            # Continue authentication even if login recording fails
     except Exception as e:
         # Log error but continue authentication flow
         logger.error(f"[get_webtoken_azure] Error recording login (code flow): {e}")
@@ -948,16 +1216,37 @@ async def token_exchange_handler(request):
         
         logger.info(f"Exchanging authorization code (first 10 chars): {code[:10]}...")
         
-        # Exchange code for tokens
-        # Access the config properties using the right attribute names
-        # The environment variables are prefixed with TIMETAGGER_ but the config object might use different naming
-        azure_instance = os.environ.get("TIMETAGGER_AZURE_INSTANCE", "https://login.microsoftonline.com")
+        # Check if we need to load configuration from database
+        # If environment variables are not set, try loading from database
+        azure_instance = os.environ.get("TIMETAGGER_AZURE_INSTANCE")
         azure_tenant_id = os.environ.get("TIMETAGGER_AZURE_TENANT_ID")
         azure_client_id = os.environ.get("TIMETAGGER_AZURE_CLIENT_ID")
         azure_client_secret = os.environ.get("TIMETAGGER_AZURE_CLIENT_SECRET")
         azure_redirect_uri = os.environ.get("TIMETAGGER_AZURE_REDIRECT_URI")
         
-        if not azure_tenant_id or not azure_client_id:
+        # If any required config is missing from environment, load from database
+        if not all([azure_tenant_id, azure_client_id, azure_client_secret]):
+            logger.info("Some Azure configuration missing from environment, loading from database")
+            try:
+                from timetagger.server.config_api import get_full_app_config
+                # Use bypass_admin_check during auth flow
+                mock_auth = {"username": "system"}  # Just for logging
+                config = get_full_app_config(mock_auth, bypass_admin_check=True)
+                
+                # Override environment variables with database config
+                azure_instance = config.get("azure_instance", "https://login.microsoftonline.com")
+                azure_tenant_id = config.get("azure_tenant_id")
+                azure_client_id = config.get("azure_client_id")
+                azure_client_secret = config.get("azure_client_secret")
+                azure_redirect_uri = config.get("azure_redirect_uri")
+                
+                logger.info("Successfully loaded Azure configuration from database")
+            except Exception as e:
+                logger.error(f"Error loading Azure configuration from database: {e}")
+                # Continue with environment variables if available
+        
+        # If still missing required config, return error
+        if not azure_tenant_id or not azure_client_id or not azure_client_secret:
             logger.error(f"Missing required Azure AD configuration: tenant_id={azure_tenant_id}, client_id={azure_client_id}")
             return 500, {"content-type": "application/json"}, {"error": "Missing required Azure AD configuration"}
         

@@ -999,7 +999,7 @@ async function updateUserAccess(username, isAllowed, role) {
     }
     
     // Call the API to update user access
-    const response = await fetch('/api/v2/users/update_access', {
+    const response = await fetch('/api/v2/users/update-access', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

@@ -231,10 +231,18 @@ async def _get_any_token(auth_info, db, tokenkind, reset):
     # Create token
     seed = await _get_token_seed_from_db(db, tokenkind, reset)
     
-    # Check if user is admin (first user in credentials list)
-    from .. import config
-    credentials = config.credentials.replace(";", ",").split(",")
-    is_admin = bool(credentials and credentials[0].startswith(auth_info["username"] + ":"))
+    # Use standardized admin check
+    try:
+        from timetagger.multiuser.auth_utils import check_admin_status
+        is_admin, source = await check_admin_status(auth_info)
+        logger.info(f"Admin status for {auth_info['username']} determined as {is_admin} (source: {source})")
+    except Exception as e:
+        logger.error(f"Error in admin status check: {e}")
+        # Fallback to legacy check if the standardized check fails
+        from .. import config
+        credentials = config.credentials.replace(";", ",").split(",")
+        is_admin = bool(credentials and credentials[0].startswith(auth_info["username"] + ":"))
+        logger.info(f"Fallback admin check based on credentials: {is_admin}")
     
     payload = dict(
         username=auth_info["username"],
@@ -286,11 +294,21 @@ async def get_webtoken_unsafe(username, reset=False, is_admin=None):
     # Produce payload
     seed = await _get_token_seed_from_db(db, "webtoken", reset)
     
-    # Check if user is admin (first user in credentials list) if not explicitly set
-    from .. import config
+    # Check if is_admin was explicitly provided 
     if is_admin is None:
-        credentials = config.credentials.replace(";", ",").split(",")
-        is_admin = bool(credentials and credentials[0].startswith(username + ":"))
+        # Use standardized admin check with mock auth_info
+        try:
+            from timetagger.multiuser.auth_utils import check_admin_status
+            mock_auth_info = {"username": username}
+            is_admin, source = await check_admin_status(mock_auth_info)
+            logger.info(f"Admin status for {username} determined as {is_admin} (source: {source})")
+        except Exception as e:
+            logger.error(f"Error in admin status check: {e}")
+            # Fallback to legacy check if the standardized check fails
+            from .. import config
+            credentials = config.credentials.replace(";", ",").split(",")
+            is_admin = bool(credentials and credentials[0].startswith(username + ":"))
+            logger.info(f"Fallback admin check based on credentials: {is_admin}")
     
     payload = dict(
         username=username,

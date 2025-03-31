@@ -419,18 +419,19 @@ class UserManager:
             "azure_users": [user for user in all_users if user["source"] == "azure"]
         }
         
-    async def update_user_access(self, username: str, is_allowed: bool) -> bool:
+    async def update_user_access(self, username: str, is_allowed: bool, role: str = None) -> bool:
         """
-        Update a user's access status.
+        Update a user's access status and optionally their role.
         
         Args:
             username: The username of the user to update.
             is_allowed: Whether the user should be allowed access.
+            role: Optional role to assign to the user (e.g., 'user', 'admin').
             
         Returns:
             bool: True if the update was successful, False otherwise.
         """
-        logger.info(f"Updating access for user {username} to {is_allowed}")
+        logger.info(f"Updating user {username}: access={is_allowed}, role={role if role else 'unchanged'}")
         
         # In a real implementation, we would update the user's access status in the database.
         # For this prototype, we'll simulate the update for our test users.
@@ -454,6 +455,8 @@ class UserManager:
                 for user in all_users["azure_users"]:
                     if user["username"] == username:
                         user["is_allowed"] = is_allowed
+                        if role:
+                            user["role"] = role
                         found = True
                         break
                 
@@ -479,6 +482,8 @@ class UserManager:
                         if setting.get("key") == "azure_info":
                             azure_info = setting.get("value", {}) or {}
                             azure_info["is_allowed"] = is_allowed
+                            if role:
+                                azure_info["role"] = role
                             
                             # Update the setting
                             setting["value"] = azure_info
@@ -491,6 +496,8 @@ class UserManager:
                         if setting.get("key") == "user_info":
                             user_info = setting.get("value", {}) or {}
                             user_info["is_allowed"] = is_allowed
+                            if role:
+                                user_info["role"] = role
                             
                             # Update the setting
                             setting["value"] = user_info
@@ -502,9 +509,13 @@ class UserManager:
                     import time
                     st = time.time()
                     
-                    db.put_one("settings", key="azure_info", st=st, mt=st, value={
+                    new_info = {
                         "is_allowed": is_allowed
-                    })
+                    }
+                    if role:
+                        new_info["role"] = role
+                    
+                    db.put_one("settings", key="azure_info", st=st, mt=st, value=new_info)
                     
                     logger.info(f"Created new azure_info for user {username}")
                     return True
@@ -515,6 +526,8 @@ class UserManager:
                         if setting.get("key") == "user_info":
                             user_info = setting.get("value", {}) or {}
                             user_info["is_allowed"] = is_allowed
+                            if role:
+                                user_info["role"] = role
                             
                             # Update the setting
                             setting["value"] = user_info
@@ -526,9 +539,13 @@ class UserManager:
                     import time
                     st = time.time()
                     
-                    db.put_one("settings", key="user_info", st=st, mt=st, value={
+                    new_info = {
                         "is_allowed": is_allowed
-                    })
+                    }
+                    if role:
+                        new_info["role"] = role
+                    
+                    db.put_one("settings", key="user_info", st=st, mt=st, value=new_info)
                     
                     logger.info(f"Created new user_info for local user {username}")
                     return True

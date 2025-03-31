@@ -136,8 +136,17 @@ def get_auth_info():
         if auth_info_str and token:
             try:
                 auth_info = JSON.parse(auth_info_str)
+                if not auth_info:
+                    console.warn("[tools.py] auth_info is null after parsing")
+                    return None
+                    
                 # Ensure token is attached
                 auth_info.token = token
+                
+                # Initialize cantuse property if not present to prevent null reference errors
+                if not hasattr(auth_info, 'cantuse'):
+                    auth_info.cantuse = None
+                    
                 console.log("[tools.py] Successfully parsed auth_info:", auth_info)
                 return auth_info
             except Exception as err:
@@ -156,23 +165,50 @@ def get_auth_info():
 def set_auth_info_from_token(token):
     """Set the authentication by providing a TimeTagger webtoken."""
     try:
+        if not token:
+            console.error("[tools.py] Empty token provided to set_auth_info_from_token")
+            return None
+            
+        console.log("[tools.py] Setting auth info from token: " + token[:20] + "...")
+        
         # Parse the token payload
-        payload_base64 = token.split(".")[1].replace("_", "/")
+        token_parts = token.split(".")
+        if len(token_parts) < 2:
+            console.error("[tools.py] Invalid token format - not enough parts")
+            return None
+            
+        payload_base64 = token_parts[1].replace("_", "/")
         # Add padding if needed
         padding = 4 - (len(payload_base64) % 4)
         if padding != 4:
             payload_base64 += "=" * padding
             
-        auth_info = JSON.parse(
-            window.decodeURIComponent(window.escape(window.atob(payload_base64)))
-        )
+        decoded_text = window.decodeURIComponent(window.escape(window.atob(payload_base64)))
+        auth_info = JSON.parse(decoded_text)
+        
+        if not auth_info:
+            console.error("[tools.py] Failed to parse token payload")
+            return None
+            
+        # Ensure token is attached to the auth_info
         auth_info.token = token
+        
+        # Initialize cantuse property if not present to prevent null reference errors
+        if not hasattr(auth_info, 'cantuse'):
+            auth_info.cantuse = None
         
         # Store both the full auth info and the token separately
         localStorage.setItem("timetagger_auth_info", JSON.stringify(auth_info))
         localStorage.setItem("timetagger_auth_token", token)
         
         console.log("[tools.py] Auth info and token stored successfully")
+        console.log("[tools.py] Username: " + auth_info.username)
+        console.log("[tools.py] Is admin: " + String(auth_info.is_admin))
+        
+        # Using Date in Python-transpiled code requires window.Date
+        expiry_date = window.Date(auth_info.expires * 1000)
+        console.log("[tools.py] Expires: " + expiry_date.toISOString())
+        
         return auth_info
     except Exception as err:
         console.error("[tools.py] Error storing auth info:", err)
@@ -183,6 +219,7 @@ async def logout():
     """Log the user out by discarting auth info. Await this call!"""
     # Forget the JWT and associated info.
     localStorage.setItem("timetagger_auth_info", "")
+    localStorage.setItem("timetagger_auth_token", "")
 
     # Forget our cache. Note that this is async.
     await AsyncStorage().clear()
@@ -232,7 +269,13 @@ async def renew_webtoken(verbose=True, reset=False):
 
     # Apply
     d = JSON.parse(await res.text())
-    set_auth_info_from_token(d.token)
+    new_token_info = set_auth_info_from_token(d.token)
+    
+    # If admin status changed, reload the page to update UI
+    if auth.is_admin != new_token_info.is_admin:
+        console.warn("Admin status changed, reloading page")
+        location.reload()
+    
     if verbose:
         console.warn("webtoken renewed")
 

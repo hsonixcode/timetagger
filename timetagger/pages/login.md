@@ -200,50 +200,148 @@ class AzureAuthHandler {
         }
         
         if (tokens.id_token) {
-            localStorage.setItem('azure_id_token', tokens.id_token);
-            console.log('ID token stored');
-            
-            // Parse user info from ID token
+            // Parse the ID token to extract user information
             try {
                 const idTokenParts = tokens.id_token.split('.');
-                const base64Url = idTokenParts[1];
-                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                const padded = base64 + '==='.slice(0, (4 - base64.length % 4) % 4);
-                const payload = JSON.parse(atob(padded));
+                const payload = JSON.parse(atob(idTokenParts[1]));
+                console.log('ID token parsed', {
+                    username: payload.preferred_username || payload.email,
+                    name: payload.name,
+                    exp: new Date(payload.exp * 1000).toLocaleString()
+                });
                 
-                // Update token status
-                await validateTokens();
-                
-                // Use the username from the ID token for TimeTagger authentication
-                if (payload.preferred_username || payload.email) {
-                    const username = payload.preferred_username || payload.email;
-                    console.log('Using username from ID token:', username);
-                    
-                    // Authenticate with TimeTagger using the username and access token
-                    await this.authenticateWithTimeTagger(username, tokens.access_token);
-                } else {
-                    console.error('No username or email found in ID token');
-                    this.updateStatus('No username found in ID token', 'error');
+                // Validate token expiration
+                const now = Math.floor(Date.now() / 1000);
+                if (payload.exp && payload.exp < now) {
+                    console.error('ID token is expired', {
+                        expiration: new Date(payload.exp * 1000).toLocaleString(),
+                        now: new Date(now * 1000).toLocaleString()
+                    });
+                    this.updateStatus('Azure AD authentication failed - token is expired', 'error');
+                    return;
                 }
+                
+                // Store the ID token and username
+                localStorage.setItem('azure_id_token', tokens.id_token);
+                localStorage.setItem('azure_username', payload.preferred_username || payload.email);
+                
+                // Set token expiration time
+                if (payload.exp) {
+                    localStorage.setItem('azure_token_expiration', payload.exp);
+                }
+                
+                // Update token status display
+                this.updateTokenStatus();
             } catch (error) {
                 console.error('Error parsing ID token:', error);
-                this.updateStatus('Error parsing ID token', 'error');
+                this.updateStatus('Error processing Azure AD token', 'error');
+                return;
             }
+        } else {
+            console.error('No ID token received from token exchange');
+            this.updateStatus('Azure AD authentication failed - no ID token received', 'error');
+            return;
         }
         
-        if (tokens.refresh_token) {
-            localStorage.setItem('azure_refresh_token', tokens.refresh_token);
-            console.log('Refresh token stored');
+        // Now use the global getTimeTaggerToken function
+        this.updateStatus('Getting TimeTagger token...', 'info');
+        try {
+            const ttToken = await getTimeTaggerToken();
+            if (ttToken) {
+                // Get the original page URL or default to the app page
+                const originalPage = localStorage.getItem('azure_original_page') || '/timetagger/app/';
+                console.log(`Will redirect to: ${originalPage}`);
+                
+                // Clean up the original page from storage
+                localStorage.removeItem('azure_original_page');
+                localStorage.removeItem('azure_auth_state');
+                
+                // Show success message before redirect
+                this.updateStatus('Login successful! Redirecting...', 'success');
+                
+                // Redirect after a short delay
+                setTimeout(() => {
+                    window.location.href = originalPage;
+                }, 1000);
+            } else {
+                this.updateStatus('Failed to get TimeTagger token', 'error');
+            }
+        } catch (error) {
+            console.error('Error getting TimeTagger token:', error);
+            this.updateStatus(`Authentication failed: ${error.message}`, 'error');
+        }
+    }
+    
+    // Update the token status display
+    updateTokenStatus() {
+        const statusElement = document.getElementById('azure-token-details');
+        if (!statusElement) return;
+        
+        const accessToken = localStorage.getItem('azure_access_token');
+        const idToken = localStorage.getItem('azure_id_token');
+        const username = localStorage.getItem('azure_username');
+        const expiration = localStorage.getItem('azure_token_expiration');
+        
+        let status = '';
+        
+        if (idToken) {
+            try {
+                const idTokenParts = idToken.split('.');
+                const payload = JSON.parse(atob(idTokenParts[1]));
+                const now = Math.floor(Date.now() / 1000);
+                const isExpired = payload.exp < now;
+                
+                status += `ID Token: ${idToken ? idToken.substring(0, 10) + '...' : 'Not found'}\n`;
+                status += `Access Token: ${accessToken ? accessToken.substring(0, 10) + '...' : 'Not found'}\n`;
+                status += `Username: ${username || 'Unknown'}\n`;
+                status += `Expires: ${payload.exp ? new Date(payload.exp * 1000).toLocaleString() : 'Invalid Date'}\n`;
+                status += `Valid: ${isExpired ? 'No (Expired)' : 'Yes'}\n`;
+            } catch (error) {
+                status += `Error parsing token: ${error.message}\n`;
+            }
+        } else {
+            status += 'No Azure AD tokens found';
         }
         
-        if (tokens.expires_in) {
-            const expiresAt = Date.now() + (tokens.expires_in * 1000);
-            localStorage.setItem('azure_token_expires_at', expiresAt.toString());
-            console.log(`Token expiration set: ${new Date(expiresAt).toLocaleString()}`);
+        statusElement.textContent = status;
+    }
+    
+    // Update the TimeTagger token status display
+    updateTimeTaggerTokenStatus() {
+        const statusElement = document.getElementById('timetagger-token-details');
+        if (!statusElement) return;
+        
+        const token = localStorage.getItem('timetagger_webtoken');
+        
+        let status = '';
+        
+        if (token) {
+            try {
+                // Try to parse the token
+                const tokenParts = token.split('.');
+                if (tokenParts.length === 3) {
+                    const payload = JSON.parse(atob(tokenParts[1]));
+                    const now = Math.floor(Date.now() / 1000);
+                    const isExpired = payload.expires < now;
+                    
+                    status += `Token: ${token ? token.substring(0, 10) + '...' : '-'}\n`;
+                    status += `Username: ${payload.username || 'Unknown'}\n`;
+                    status += `Admin: ${payload.is_admin ? 'Yes' : 'No'}\n`;
+                    status += `Expires: ${payload.expires ? new Date(payload.expires * 1000).toLocaleString() : 'Invalid Date'}\n`;
+                    status += `Valid: ${isExpired ? 'No (Expired)' : 'Yes'}\n`;
+                    status += `Auth Info: ${JSON.stringify(payload)}\n`;
+                } else {
+                    status += `Token: ${token ? token.substring(0, 10) + '...' : '-'} (Invalid format)\n`;
+                }
+            } catch (error) {
+                status += `Token: ${token ? token.substring(0, 10) + '...' : '-'}\n`;
+                status += `Error parsing token: ${error.message}\n`;
+            }
+        } else {
+            status += 'No TimeTagger token found';
         }
         
-        // Clean up state after successful authentication
-        localStorage.removeItem('azure_auth_state');
+        statusElement.textContent = status;
     }
 
     // Authenticate with TimeTagger using username from Azure AD
@@ -317,57 +415,123 @@ class AzureAuthHandler {
 
     // Update status message with type (success, error, info)
     updateStatus(message, type = 'info') {
-        console.log(`Status update (${type}): ${message}`);
-        
-        // Update the status element
-        const statusEl = document.getElementById('login-status');
-        if (statusEl) {
-            // Clear previous styling
-            statusEl.style.backgroundColor = '';
-            statusEl.style.border = '';
-            statusEl.style.padding = '8px';
-            statusEl.style.borderRadius = '4px';
+        const statusElement = document.getElementById('login-status');
+        if (statusElement) {
+            statusElement.textContent = message;
             
-            // Apply styling based on message type
+            // Set styling based on message type
             if (type === 'error') {
-                statusEl.style.color = 'white';
-                statusEl.style.backgroundColor = '#dc3545';
-                statusEl.style.border = '1px solid #c82333';
+                statusElement.style.backgroundColor = '#ffebee';
+                statusElement.style.color = '#c62828';
+                statusElement.style.border = '1px solid #ef9a9a';
             } else if (type === 'success') {
-                statusEl.style.color = 'white';
-                statusEl.style.backgroundColor = '#28a745';
-                statusEl.style.border = '1px solid #218838';
-            } else if (type === 'warning') {
-                statusEl.style.color = '#212529';
-                statusEl.style.backgroundColor = '#ffc107';
-                statusEl.style.border = '1px solid #e0a800';
+                statusElement.style.backgroundColor = '#e8f5e9';
+                statusElement.style.color = '#2e7d32';
+                statusElement.style.border = '1px solid #a5d6a7';
             } else {
-                statusEl.style.color = 'black';
+                statusElement.style.backgroundColor = '#e3f2fd';
+                statusElement.style.color = '#1565c0';
+                statusElement.style.border = '1px solid #90caf9';
             }
             
-            // Check for "Access denied" message and highlight it specially
-            if (message.includes('Access denied')) {
-                statusEl.style.color = 'white';
-                statusEl.style.backgroundColor = '#dc3545';
-                statusEl.style.border = '1px solid #c82333';
-                statusEl.style.fontWeight = 'bold';
+            // Keep message displayed
+            statusElement.style.display = 'block';
+        }
+        
+        console.log(`Status update (${type}):`, message);
+    }
+
+    // Get a TimeTagger token using the Azure AD tokens
+    async getTimeTaggerToken() {
+        try {
+            const azureIdToken = localStorage.getItem('azure_id_token');
+            const azureAccessToken = localStorage.getItem('azure_access_token');
+            
+            if (!azureIdToken) {
+                throw new Error('Azure ID token not found');
             }
             
-            statusEl.textContent = message;
-            statusEl.style.display = message ? 'block' : 'none';
-        }
-        
-        // Update token status elements based on type
-        if (type === 'error') {
-            const errorEl = document.getElementById('error-message');
-            if (errorEl) {
-                errorEl.textContent = message;
-                errorEl.style.display = 'block';
+            console.log('Getting TimeTagger token with Azure tokens...');
+            updateStatus('Authenticating with TimeTagger...', 'info');
+            
+            // Prepare the auth data
+            const authData = {
+                method: 'azure',
+                id_token: azureIdToken,
+                access_token: azureAccessToken || null
+            };
+            
+            // Get username from ID token if possible
+            try {
+                const [, payload] = azureIdToken.split('.');
+                const decodedPayload = JSON.parse(atob(payload));
+                authData.username = decodedPayload.preferred_username || decodedPayload.email;
+            } catch (e) {
+                console.warn('Could not extract username from ID token', e);
             }
+            
+            console.log('Auth data prepared:', {
+                ...authData,
+                id_token: authData.id_token ? authData.id_token.substring(0, 20) + '...' : null,
+                access_token: authData.access_token ? authData.access_token.substring(0, 20) + '...' : null
+            });
+            
+            // Base64 encode the auth data
+            const authDataStr = JSON.stringify(authData);
+            const encoder = new TextEncoder();
+            const authDataBytes = encoder.encode(authDataStr);
+            const authDataBase64 = btoa(String.fromCharCode.apply(null, authDataBytes));
+            
+            // Call the backend to get a TimeTagger token
+            const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/octet-stream'
+                },
+                body: authDataBase64
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Failed to get TimeTagger token:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    error: errorText
+                });
+                throw new Error(`Failed to get TimeTagger token: ${errorText || response.statusText}`);
+            }
+            
+            const data = await response.json();
+            if (!data.token) {
+                throw new Error('No token received in response');
+            }
+            
+            // Store the token and authentication info
+            localStorage.setItem('timetagger_auth_token', data.token);
+            
+            // Extract the payload from the token
+            const [, tokenPayload] = data.token.split('.');
+            const decodedToken = JSON.parse(atob(tokenPayload));
+            
+            // Create and store the auth info
+            const authInfo = {
+                method: 'azure',
+                username: decodedToken.username || authData.username,
+                email: authData.username, // Use the email/username from Azure
+                is_admin: decodedToken.is_admin
+            };
+            
+            localStorage.setItem('timetagger_auth_info', JSON.stringify(authInfo));
+            console.log('TimeTagger token and auth info stored successfully');
+            
+            updateStatus('Authentication successful', 'success');
+            return data.token;
+        } catch (error) {
+            console.error('Error getting TimeTagger token:', error);
+            updateStatus(`Authentication failed: ${error.message}`, 'error');
+            return null;
         }
-        
-        // Validate tokens after status update
-        validateTokens();
     }
 }
 
@@ -1085,6 +1249,99 @@ window.addEventListener('load', async () => {
         }
     }
 });
+
+// Function to get TimeTagger token from Azure tokens
+async function getTimeTaggerToken() {
+    try {
+        const azureIdToken = localStorage.getItem('azure_id_token');
+        const azureAccessToken = localStorage.getItem('azure_access_token');
+        
+        if (!azureIdToken) {
+            throw new Error('Azure ID token not found');
+        }
+        
+        console.log('Getting TimeTagger token with Azure tokens...');
+        updateStatus('Authenticating with TimeTagger...', 'info');
+        
+        // Prepare the auth data
+        const authData = {
+            method: 'azure',
+            id_token: azureIdToken,
+            access_token: azureAccessToken || null
+        };
+        
+        // Get username from ID token if possible
+        try {
+            const [, payload] = azureIdToken.split('.');
+            const decodedPayload = JSON.parse(atob(payload));
+            authData.username = decodedPayload.preferred_username || decodedPayload.email;
+        } catch (e) {
+            console.warn('Could not extract username from ID token', e);
+        }
+        
+        console.log('Auth data prepared:', {
+            ...authData,
+            id_token: authData.id_token ? authData.id_token.substring(0, 20) + '...' : null,
+            access_token: authData.access_token ? authData.access_token.substring(0, 20) + '...' : null
+        });
+        
+        // Base64 encode the auth data
+        const authDataStr = JSON.stringify(authData);
+        const encoder = new TextEncoder();
+        const authDataBytes = encoder.encode(authDataStr);
+        const authDataBase64 = btoa(String.fromCharCode.apply(null, authDataBytes));
+        
+        // Call the backend to get a TimeTagger token
+        const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/octet-stream'
+            },
+            body: authDataBase64
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Failed to get TimeTagger token:', {
+                status: response.status,
+                statusText: response.statusText,
+                error: errorText
+            });
+            throw new Error(`Failed to get TimeTagger token: ${errorText || response.statusText}`);
+        }
+        
+        const data = await response.json();
+        if (!data.token) {
+            throw new Error('No token received in response');
+        }
+        
+        // Store the token and authentication info
+        localStorage.setItem('timetagger_auth_token', data.token);
+        
+        // Extract the payload from the token
+        const [, tokenPayload] = data.token.split('.');
+        const decodedToken = JSON.parse(atob(tokenPayload));
+        
+        // Create and store the auth info
+        const authInfo = {
+            method: 'azure',
+            username: decodedToken.username || authData.username,
+            email: authData.username, // Use the email/username from Azure
+            is_admin: decodedToken.is_admin
+        };
+        
+        localStorage.setItem('timetagger_auth_info', JSON.stringify(authInfo));
+        console.log('TimeTagger token and auth info stored successfully');
+        
+        updateStatus('Authentication successful', 'success');
+        return data.token;
+    } catch (error) {
+        console.error('Error getting TimeTagger token:', error);
+        updateStatus(`Authentication failed: ${error.message}`, 'error');
+        return null;
+    }
+}
 
 </script>
 
