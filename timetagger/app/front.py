@@ -1164,7 +1164,8 @@ class TopWidget(Widget):
         menu_items.append(("Export all records", "export_all"))
         menu_items.append(None)  # separator
         menu_items.append(("Settings", "settings", "Ctrl+,"))
-        menu_items.append(("Configure External Auth", "configure_external_auth")) # New item
+        menu_items.append(("Users", "users_page"))  # Add the Users menu item
+        menu_items.append(("Configure External Auth", "configure_external_auth"))
         menu_items.append(("Account", "account_page"))
         menu_items.append(("Logout", "logout"))
 
@@ -1560,179 +1561,51 @@ class TopWidget(Widget):
         e.preventDefault()
 
     def _handle_button_press(self, action, picked=None):
-        now = self._canvas.now()
-        if action == "menu":
-            # Define menu items dynamically here
-            menu_items = []
-            menu_items.append(("Search", "search", "Ctrl+F"))
-            menu_items.append(("Import records", "import_records"))
-            menu_items.append(("Export all records", "export_all"))
-            menu_items.append(None)  # separator
-            menu_items.append(("Settings", "settings", "Ctrl+,"))
-            menu_items.append(("Configure External Auth", "configure_external_auth")) # New item
-            menu_items.append(("Account", "account_page"))
-            menu_items.append(("Logout", "logout"))
-            self._canvas.menu_dialog.open(menu_items) # Pass items to open()
+        """React to a button press by the user. We get the action string and
+        the picked menu item widget.
+        """
 
+        self.run_updating_timer = False
+
+        if action == "menu":
+            self._canvas.menu_dialog.open()
+        elif action == "login":
+            window.location.href = "/timetagger/login"
+        elif action == "logout":
+            self._logout()
         elif action == "search":
             self._canvas.search_dialog.open()
-
-        elif action == "login":
-            window.location.href = "../login"
-
-        elif action == "dosync":
-            if window.store.state in ("warning", "error"):
-                last_error = window.store.last_error or "Unknown sync error"
-                self._canvas.notification_dialog.open(last_error, "Sync error")
-            else:
-                msg = "This button shows the sync status. The current status is <b>OK</b>!"
-                msg += "<br><br>The app and server continiously exchange updates. "
-                msg += "When something is wrong, this button will change, "
-                msg += "and you can then click it to get more info."
-                self._canvas.notification_dialog.open(msg, "Sync status")
-                # Also sync now
-                window.store.sync_soon(0.2)
-
         elif action == "report":
-            self._canvas.report_dialog.open()
-
+            self._open_report()
         elif action == "guide":
             self._canvas.guide_dialog.open()
+        elif action == "settings":
+            self._show_settings()
+        elif action == "import_records":
+            self._canvas.import_dialog.open()
+        elif action == "export_all":
+            self._export()
+        elif action == "account_page":
+            window.location.href = "/timetagger/account"
+        elif action == "configure_external_auth":
+            window.location.href = "/timetagger/configure_external_auth"
+        elif action == "users_page":
+            window.location.href = "/timetagger/users"
 
-        elif action == "pomo":
-            self._canvas.pomodoro_dialog.open()
+    def _logout(self):
+        ok = window.confirm("Are you sure you want to log out?")
+        if ok:
+            window.tools.clear_auth_info()
+            window.location.reload()
 
-        elif action.startswith("record_"):
-            # A time tracking action
-            if action == "record_start":
-                record = window.store.records.create(now, now)
-                self._canvas.record_dialog.open("Start", record, self.update)
-            elif action == "record_new":
-                record = window.store.records.create(now - 1800, now)
-                self._canvas.record_dialog.open("New", record, self.update)
-            elif action == "record_resume":
-                record = window.store.records.create(now, now)
-                records = window.store.records.get_running_records()
-                if not records:
-                    records = window.store.records.get_records(
-                        now - 7 * 86400, now
-                    ).values()
-                    records.sort(key=lambda r: r.t2)
-                if records:
-                    prev_record = records[-1]
-                    record.ds = prev_record.ds
-                self._canvas.record_dialog.open("Start", record, self.update)
-            elif action == "record_stop":
-                records = window.store.records.get_running_records()
-                if len(records) > 0:
-                    record = records[0]
-                    record.t2 = max(record.t1 + 2, now)
-                    self._canvas.record_dialog.open("Stop", record, self.update)
-            elif action == "record_stopall":
-                records = window.store.records.get_running_records()
-                for record in records:
-                    record.t2 = max(record.t1 + 2, now)
-                    window.store.records.put(record)
-                if window.simplesettings.get("pomodoro_enabled"):
-                    self._canvas.pomodoro_dialog.stop()
+    def _open_report(self):
+        self._canvas.report_dialog.open()
 
-        elif action.startswith("nav_"):
-            # A navigation action
-            if action.startswith("nav_snap_"):
-                res = action.split("_")[-1]
-                t1, t2 = self._canvas.range.get_target_range()
-                if res == "today":
-                    t1, t2 = self._canvas.range.get_today_range()
-                elif res.startswith("now"):
-                    res = res[3:]
-                    if len(res) == 0:
-                        nsecs = t2 - t1
-                        t1 = now - nsecs / 2
-                        t2 = now + nsecs / 2
-                    else:
-                        t1 = dt.floor(now, res)
-                        t2 = dt.add(t1, res)
-                else:
-                    t_ref = now if (t1 <= now <= t2) else (t2 + t1) / 2
-                    t1 = dt.floor(t_ref, res)
-                    t2 = dt.add(t1, res)
-                self._canvas.range.animate_range(t1, t2)
-            elif action.startswith("nav_zoom_"):
-                t1, t2 = self._canvas.range.get_target_range()
-                res = action.split("_")[-1]
-                now_is_in_range = t1 <= now <= t2
-                if res == "-1" or res == "+1":
-                    if res == "-1":
-                        t1, t2 = self._canvas.range.get_snap_range(-1)
-                    else:
-                        t1, t2 = self._canvas.range.get_snap_range(+1)
-                    if now_is_in_range:
-                        t1, t2 = now - 0.5 * (t2 - t1), now + 0.5 * (t2 - t1)
-                else:
-                    t_ref = now if (t1 <= now <= t2) else (t2 + t1) / 2
-                    t1 = dt.floor(t_ref, res)
-                    t2 = dt.add(t1, res)
-                self._canvas.range.animate_range(t1, t2)
-            elif action == "nav_backward" or action == "nav_forward":
-                t1, t2 = self._canvas.range.get_target_range()
-                nsecs = t2 - t1
-                if nsecs < 80000:
-                    if action == "nav_backward":
-                        self._canvas.range.animate_range(t1 - nsecs, t1, None, False)
-                    else:
-                        self._canvas.range.animate_range(t2, t2 + nsecs, None, False)
-                else:
-                    res = self._current_scale["now"]
-                    if action == "nav_backward":
-                        res = "-" + res
-                    t1 = dt.add(t1, res)
-                    t2 = dt.add(t2, res)
-                    self._canvas.range.animate_range(t1, t2, None, False)
-            elif action == "nav_menu":
-                self._canvas.timeselection_dialog.open()
+    def _show_settings(self):
+        self._canvas.settings_dialog.open()
 
-        elif action.startswith("select_"):
-            # A selection action
-            if action == "select_none":
-                self._canvas.widgets.AnalyticsWidget.unselect_all_tags()
-
-        elif action.startswith("zoom_"):
-            t1, t2 = self._canvas.range.get_target_range()
-            res = action.split("_")[-1]
-            now_is_in_range = t1 <= now <= t2
-            if res == "-1" or res == "+1":
-                if res == "-1":
-                    t1, t2 = self._canvas.range.get_snap_range(-1)
-                else:
-                    t1, t2 = self._canvas.range.get_snap_range(+1)
-                if now_is_in_range:
-                    t1, t2 = now - 0.5 * (t2 - t1), now + 0.5 * (t2 - t1)
-            else:
-                t_ref = now if (t1 <= now <= t2) else (t2 + t1) / 2
-                t1 = dt.floor(t_ref, res)
-                t2 = dt.add(t1, res)
-            self._canvas.range.animate_range(t1, t2)
-        elif action.startswith("step_"):
-            t1, t2 = self._canvas.range.get_target_range()
-            nsecs = t2 - t1
-            if action == "step_backward":
-                self._canvas.range.animate_range(t1 - nsecs, t1)
-            else:
-                self._canvas.range.animate_range(t2, t2 + nsecs)
-        elif action == "editrecord":
-            if picked and hasattr(picked, 'key'):
-                record = window.store.records.get_by_key(picked.key)
-                self._canvas.record_dialog.open(
-                    "Edit", record, self._selected_record_updated
-                )
-        elif action == "editcurrentrecord":
-            # The button for the currently selected record
-            if self._selected_record:
-                record = self._selected_record[0]  # before-drag!
-                record = window.store.records.get_by_key(record.key)
-                self._canvas.record_dialog.open(
-                    "Edit", record, self._selected_record_updated
-                )
+    def _export(self):
+        self._canvas.export_dialog.open()
 
 
 class RecordsWidget(Widget):

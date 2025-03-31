@@ -45,6 +45,8 @@ from timetagger.server import (
 )
 import httpx
 
+# Import our multiuser API handlers - change from relative to absolute import
+from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, record_login_test, debug_azure_users
 
 # Special hooks exit early
 if __name__ == "__main__" and len(sys.argv) >= 2:
@@ -417,6 +419,42 @@ async def api_handler_triage(request, path, auth_info, db):
     # Get the request method
     method = request.method.upper()
     
+    # Extract the base path (before any numeric ID)
+    base_path = path
+    path_parts = path.split('/')
+    
+    # Log the path for debugging
+    logger.info(f"API request path: {path}, Parts: {path_parts}")
+    
+    # Handle multiuser endpoints
+    if path == "users":
+        from timetagger.multiuser.api import get_users
+        return await get_users(request, auth_info)
+    elif path == "users/search":
+        from timetagger.multiuser.api import search_users
+        return await search_users(request, auth_info)
+    elif path == "users/update_access":
+        from timetagger.multiuser.api import update_user_access
+        return await update_user_access(request, auth_info)
+    elif path == "users/record_login_test":
+        from timetagger.multiuser.api import record_login_test
+        return await record_login_test(request, auth_info)
+    elif path == "login-users" or path.startswith("login-users/"):
+        # Handle login-users endpoints with potential IDs
+        if path == "login-users/backfill":
+            from timetagger.multiuser.api import backfill_login_database
+            return await backfill_login_database(request, auth_info)
+        elif path == "login-users/debug":
+            from timetagger.multiuser.api import debug_azure_users
+            return await debug_azure_users(request, auth_info)
+        else:
+            # This handles both "login-users" and "login-users/{id}" cases
+            from timetagger.multiuser.api import get_login_users
+            # Add path to request object for later extraction if needed
+            if not hasattr(request, 'path'):
+                request.path = path
+            return await get_login_users(request, auth_info)
+    
     # Handle Azure config endpoints
     if path == "config/azure":
         from .server.config_api import get_azure_config, update_azure_config
@@ -576,6 +614,45 @@ async def get_webtoken_azure(request, auth_info):
         logger.info(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
         print(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
         
+        # First, check if the user is allowed to access the system
+        try:
+            from timetagger.multiuser.login_tracker import LoginTracker
+            from timetagger.multiuser.user import UserManager
+            
+            # Check central login database first
+            tracker = LoginTracker()
+            email = username  # For Azure users, username is typically the email
+            
+            # Check if user exists and is allowed
+            user_allowed = True  # Default to allowed
+            
+            # First check in the central login database
+            user = tracker.get_login_by_email(email)
+            if user:
+                if user.get("access") == "not allowed":
+                    logger.warning(f"[get_webtoken_azure] User {email} is not allowed to access the system (from central DB)")
+                    return 403, {}, "Access denied: Your account has been disabled"
+            
+            # If not in central database, check UserManager
+            else:
+                user_manager = UserManager()
+                all_users = user_manager.get_all_users_classified()
+                
+                # Find the user in the list
+                matched_user = None
+                for u in all_users:
+                    if u.get("username") == username or u.get("email") == email:
+                        matched_user = u
+                        break
+                
+                if matched_user and not matched_user.get("is_allowed", True):
+                    logger.warning(f"[get_webtoken_azure] User {email} is not allowed to access the system (from UserManager)")
+                    return 403, {}, "Access denied: Your account has been disabled"
+        
+        except Exception as e:
+            # Log error but continue - we'll default to allowing access
+            logger.error(f"[get_webtoken_azure] Error checking user access: {e}")
+        
         # Check if this is the first user (admin)
         is_admin = False
         if CREDENTIALS:
@@ -597,6 +674,34 @@ async def get_webtoken_azure(request, auth_info):
         token = await get_webtoken_unsafe(username, is_admin=is_admin)
         logger.info(f"Successfully generated TimeTagger token (admin: {is_admin})")
         print(f"[get_webtoken_azure] Generated token: {token[:10]}... (admin: {is_admin})")
+        
+        # Record the login in the central database
+        try:
+            from timetagger.multiuser.login_tracker import LoginTracker
+            
+            # Create login record
+            email = username  # For Azure users, username is typically the email
+            tracker = LoginTracker()
+            user_data = {
+                "email": email,
+                "username": username,
+                "role": "admin" if is_admin else "user",
+                "user_type": "azure",
+                "is_allowed": True,  # Azure users are allowed by default
+                "source_db": f"{username}.db",
+                "metadata": {
+                    "auth_method": "azure",
+                    "access_token_present": bool(access_token)
+                }
+            }
+            
+            # Record login asynchronously (don't block the authentication flow)
+            await tracker.record_login(user_data)
+            logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database")
+        except Exception as e:
+            # Log error but continue authentication flow
+            logger.error(f"[get_webtoken_azure] Error recording login: {e}")
+        
         return 200, {}, dict(token=token)
     
     # If we don't have a username and access token, try the code flow (THIS PATH SHOULD NOT BE USED NORMALLY)
@@ -672,6 +777,35 @@ async def get_webtoken_azure(request, auth_info):
     token = await get_webtoken_unsafe(username, is_admin=False)
     logger.info("Successfully generated TimeTagger token (via code flow)")
     print(f"[get_webtoken_azure] Generated token (via code flow): {token[:10]}...")
+    
+    # Record the login in the central database
+    try:
+        from timetagger.multiuser.login_tracker import LoginTracker
+        
+        # Create login record
+        email = username  # For Azure users, username is typically the email
+        tracker = LoginTracker()
+        user_data = {
+            "email": email,
+            "username": username,
+            "role": "user",  # Default to regular user for code flow
+            "user_type": "azure",
+            "is_allowed": True,  # Azure users are allowed by default
+            "source_db": f"{username}.db",
+            "metadata": {
+                "auth_method": "azure",
+                "auth_flow": "code",
+                "token_payload": {k: v for k, v in id_token_payload.items() if k in ["name", "given_name", "family_name"]}
+            }
+        }
+        
+        # Record login asynchronously (don't block the authentication flow)
+        await tracker.record_login(user_data)
+        logger.info(f"[get_webtoken_azure] Recorded login for user {email} in central database (code flow)")
+    except Exception as e:
+        # Log error but continue authentication flow
+        logger.error(f"[get_webtoken_azure] Error recording login (code flow): {e}")
+    
     return 200, {}, dict(token=token)
 
 
@@ -722,10 +856,88 @@ async def get_webtoken_usernamepassword(request, auth_info):
     if not bcrypt.checkpw(password.encode(), hash.encode()):
         logger.warning(f"Password check failed for user '{username}'")
         return 403, {}, "forbidden: invalid credentials"
+    
+    # Check if user is allowed to access the system (for regular users, not the admin)
+    # Admin users from credentials file are always allowed
+    if not username == list(CREDENTIALS.keys())[0]:  # Skip check for first user (admin)
+        try:
+            from timetagger.multiuser.login_tracker import LoginTracker
+            from timetagger.multiuser.user import UserManager
+            
+            # First check in the central login database
+            tracker = LoginTracker()
+            
+            # Try to find user by username as email
+            user = tracker.get_login_by_email(username)
+            
+            # If not found, try to create a local-style email
+            if not user and '@' not in username:
+                local_email = f"{username}@localhost"
+                user = tracker.get_login_by_email(local_email)
+            
+            if user:
+                if user.get("access") == "not allowed":
+                    logger.warning(f"[get_webtoken_usernamepassword] User {username} is not allowed to access the system (from central DB)")
+                    return 403, {}, "Access denied: Your account has been disabled"
+            
+            # If not in central database, check UserManager
+            else:
+                user_manager = UserManager()
+                all_users = user_manager.get_all_users_classified()
+                
+                # Find the user in the list
+                matched_user = None
+                for u in all_users:
+                    if u.get("username") == username:
+                        matched_user = u
+                        break
+                
+                if matched_user and not matched_user.get("is_allowed", True):
+                    logger.warning(f"[get_webtoken_usernamepassword] User {username} is not allowed to access the system (from UserManager)")
+                    return 403, {}, "Access denied: Your account has been disabled"
+        
+        except Exception as e:
+            # Log error but continue - we'll default to allowing access
+            logger.error(f"[get_webtoken_usernamepassword] Error checking user access: {e}")
+    
     # Return the webtoken
     logger.info(f"Credentials validated successfully for user '{username}'")
     token = await get_webtoken_unsafe(username)
     logger.info(f"Generated token for user '{username}': {token[:10]}...")
+    
+    # Record the login in the central database
+    try:
+        from timetagger.multiuser.login_tracker import LoginTracker
+        
+        # Create login record - try to extract email from username
+        email = username
+        if '@' not in username:
+            email = f"{username}@localhost"  # Fallback for local users without email
+        
+        tracker = LoginTracker()
+        user_data = {
+            "email": email,
+            "username": username,
+            "role": "user",  # Will be updated to admin if first user
+            "user_type": "local",
+            "is_allowed": True,  # Local users are allowed by default
+            "source_db": f"{username}.db",
+            "metadata": {
+                "auth_method": "usernamepassword"
+            }
+        }
+        
+        # Check if this is the admin (first user in credentials)
+        if CREDENTIALS and username == list(CREDENTIALS.keys())[0]:
+            user_data["role"] = "admin"
+        
+        # Record login asynchronously (don't block the authentication flow)
+        await tracker.record_login(user_data)
+        logger.info(f"Recorded login for user {email} in central database")
+    except Exception as e:
+        # Log error but continue authentication flow
+        logger.error(f"Error recording login: {e}")
+    
     return 200, {}, dict(token=token)
 
 

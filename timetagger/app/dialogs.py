@@ -417,6 +417,7 @@ class MenuDialog(BaseDialog):
             ("\uf56e", store_valid, "Export all records", self._export),
             (None, True, "User", None),
             ("\uf013", store_valid, "Settings", self._show_settings),
+            ("\uf233", logged_in, "Users", "/timetagger/users"), # Add Users menu item
             ("\uf2bd", True, "Account", "/timetagger/account"), # Uncommented and updated link
             # Add Configure External Auth Link - SHOW ONLY WHEN LOGGED IN
             ("\uf0ad", logged_in, "Configure External Auth", "/timetagger/configure_external_auth"),
