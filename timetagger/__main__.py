@@ -525,14 +525,31 @@ async def get_webtoken(request):
     logger.info("get_webtoken called")
     
     try:
+        content_type = request.headers.get("content-type", "")
         body = await request.get_body()
-        logger.info(f"Raw request body (first 100 bytes): {body[:100]}")
-        decoded_body = b64decode(body)
-        logger.info(f"Decoded body (first 100 bytes): {decoded_body[:100]}")
-        auth_info = json.loads(decoded_body)
-        logger.info(f"Auth info: {auth_info}")
+        
+        # Handle JSON Content-Type
+        if content_type.lower().startswith("application/json"):
+            logger.info(f"Processing JSON content-type request")
+            try:
+                auth_info = json.loads(body)
+                logger.info(f"JSON Auth info: {auth_info}")
+            except Exception as e:
+                logger.error(f"Error parsing JSON request body: {str(e)}")
+                return 400, {}, f"Bad request: {str(e)}"
+        # Handle Base64 encoded body (legacy/default)
+        else:
+            logger.info(f"Processing Base64 encoded request body")
+            try:
+                decoded_body = b64decode(body)
+                logger.info(f"Decoded body: {decoded_body[:100]}")
+                auth_info = json.loads(decoded_body)
+                logger.info(f"Base64 Auth info: {auth_info}")
+            except Exception as e:
+                logger.error(f"Error decoding Base64 request body: {str(e)}")
+                return 400, {}, f"Bad request: {str(e)}"
     except Exception as e:
-        logger.error(f"Error decoding request body: {str(e)}")
+        logger.error(f"Error processing request body: {str(e)}")
         return 400, {}, f"Bad request: {str(e)}"
     
     method = auth_info.get("method", "unspecified")

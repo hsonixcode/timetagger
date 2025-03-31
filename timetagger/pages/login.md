@@ -829,7 +829,7 @@ async function handleCredentialLogin(event) {
     try {
         const response = await fetch('/timetagger/api/v2/bootstrap_authentication', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'content-type': 'application/json' },
             body: JSON.stringify(loginData)
         });
         
