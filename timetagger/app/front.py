@@ -3076,6 +3076,7 @@ class RecordsWidget(Widget):
         elif action.startswith("zoom_"):
             t1, t2 = self._canvas.range.get_target_range()
             res = action.split("_")[-1]
+            now = self._canvas.now()  # Get current time using canvas method
             now_is_in_range = t1 <= now <= t2
             if res == "-1" or res == "+1":
                 if res == "-1":
