@@ -267,17 +267,38 @@ async def renew_webtoken(verbose=True, reset=False):
     if not auth:
         return
 
-    # Apply
-    d = JSON.parse(await res.text())
-    new_token_info = set_auth_info_from_token(d.token)
+    # Apply - handle both JSON response and direct token string
+    response_text = await res.text()
+    token = None
     
-    # If admin status changed, reload the page to update UI
-    if auth.is_admin != new_token_info.is_admin:
-        console.warn("Admin status changed, reloading page")
-        location.reload()
+    try:
+        # Try to parse as JSON first
+        d = JSON.parse(response_text)
+        if d and d.token:
+            token = d.token
+        else:
+            # Maybe it's a JSON object without a token property
+            console.warn("JSON response doesn't contain token property")
+    except Exception:
+        # If not valid JSON, assume the response is the token itself
+        if response_text.startsWith("eyJ"):  # Simple check for JWT format
+            token = response_text
+        else:
+            console.error("Invalid token format received")
+            return
     
-    if verbose:
-        console.warn("webtoken renewed")
+    if token:
+        new_token_info = set_auth_info_from_token(token)
+        
+        # If admin status changed, reload the page to update UI
+        if auth.is_admin != new_token_info.is_admin:
+            console.warn("Admin status changed, reloading page")
+            location.reload()
+        
+        if verbose:
+            console.warn("webtoken renewed")
+    else:
+        console.error("Token renewal failed - no valid token received")
 
 
 # Renew token now, and set up to renew each hour

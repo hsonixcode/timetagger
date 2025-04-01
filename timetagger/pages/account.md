@@ -290,7 +290,7 @@ window.addEventListener("load", refresh);
 <details style='font-size: 80%; padding:0.5em; border: 1px solid #ddd; border-radius:4px;'>
     <summary style='user-select:none;'>api-token details</summary>
     <p>
-    The API token enables access to the server for 3d party applications (e.g. the CLI tool). API tokens do not expire.
+    The API token enables access to the server for 3d party applications (e.g. the CLI tool). API tokens expire after 14 days, just like web tokens.
     Reset the token to revoke access for all applications using the current API token.
     </p>
 </details>

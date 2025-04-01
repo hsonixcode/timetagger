@@ -14,30 +14,6 @@ from .db_utils import get_session, Record, Settings, UserInfo, UserInfoKeyValue
 
 logger = logging.getLogger("asgineer")
 
-# Define requirements and specs for records and settings
-REQS = {
-    "records": ["key", "t1", "tags"],
-    "settings": ["key", "value"],
-}
-
-SPECS = {
-    "records": {
-        "key": str,
-        "t1": float,
-        "t2": float,
-        "mt": float,
-        "st": float,
-        "ds": str,
-        "tags": str,
-    },
-    "settings": {
-        "key": str,
-        "value": lambda x: x,
-        "mt": float,
-        "st": float,
-    },
-}
-
 # At the server:
 #
 # * We specify the fields that an item has (that the server accepts).
@@ -52,6 +28,8 @@ SPECS = {
 to_int = int
 to_float = float
 
+STR_MAX = 256
+JSON_MAX = 8192
 
 def to_str(s):
     s = str(s)
@@ -66,6 +44,16 @@ def to_jsonable(x):
         raise ValueError("Values must be less than 256 chars when jsonized.")
     return x
 
+# Define requirements and specs first with direct values
+REQS = {
+    "records": ["key", "mt", "t1", "t2"],
+    "settings": ["key", "mt", "value"],
+}
+
+SPECS = {
+    "records": dict(key=to_str, mt=to_int, t1=to_int, t2=to_int, ds=to_str),
+    "settings": dict(key=to_str, mt=to_int, value=to_jsonable),
+}
 
 # ----- COMMON PART (don't change this comment)
 
@@ -75,8 +63,11 @@ RECORD_REQ = ["key", "mt", "t1", "t2"]
 SETTING_SPEC = dict(key=to_str, mt=to_int, value=to_jsonable)
 SETTING_REQ = ["key", "mt", "value"]
 
-STR_MAX = 256
-JSON_MAX = 8192
+# Update the REQS and SPECS with the defined constants
+REQS["records"] = RECORD_REQ
+REQS["settings"] = SETTING_REQ
+SPECS["records"] = RECORD_SPEC
+SPECS["settings"] = SETTING_SPEC
 
 # ----- END COMMON PART (don't change this comment)
 
@@ -420,19 +411,18 @@ async def _get_any_token(auth_info, db, tokenkind, reset):
         
         # Create token
         st = time.time()
-        if tokenkind == "webtoken":
-            exptime = st + WEBTOKEN_LIFETIME
-        else:
-            exptime = API_TOKEN_EXP  # the year 3000
+        # Use the same expiration time for both web and API tokens
+        exptime = st + WEBTOKEN_LIFETIME
         
         payload = {
             "username": username,
             "expires": int(exptime),
             "seed": db_seed,
-            "is_admin": is_admin  # Include admin status in the token
+            "is_admin": is_admin,  # Include admin status in the token
+            "token_type": tokenkind  # Include token type for differentiation
         }
         token = create_jwt(payload)
-        logger.info(f"Generated {tokenkind} for {username} with is_admin={is_admin}")
+        logger.info(f"Generated {tokenkind} for {username} with is_admin={is_admin}, expires in {WEBTOKEN_DAYS} days")
         
         # Done!
         return token, db_seed

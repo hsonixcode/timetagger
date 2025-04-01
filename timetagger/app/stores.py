@@ -165,12 +165,22 @@ def generate_uid():
 
 def is_hidden(item):
     """Get whether the given item is hidden."""
-    return item.get("ds", "").startswith("HIDDEN")
+    if item is None:
+        return False
+    ds = item.get("ds", "")
+    if ds is None:
+        return False
+    return ds.startswith("HIDDEN")
 
 
 def make_hidden(item):
     """Mark the given item as hidden."""
-    item.ds = "HIDDEN " + item.get("ds", "").split("HIDDEN")[-1].strip()
+    if item is None:
+        return
+    ds = item.get("ds", "")
+    if ds is None:
+        ds = ""
+    item.ds = "HIDDEN " + ds.split("HIDDEN")[-1].strip()
 
 
 # %% Sub stores
@@ -378,6 +388,18 @@ class RecordStore(BaseStore):
         self._heap = [{}]  # list of layers, each layer is binNr -> stats
         self._heap0_bin2record_keys = {}  # binNr -> dict-of-record-keys (i.e. a set)
 
+    def stop_running_records(self, t2=None):
+        """Stop all running records by setting their t2 to the given time or current time.
+        Returns the number of records that were stopped.
+        """
+        records = self.get_running_records()
+        if t2 is None:
+            t2 = dt.now()
+        for record in records:
+            record.t2 = max(record.t1 + 2, t2)  # Set duration to at least 2s
+            self.put(record)
+        return len(records)
+
     def create(self, t1, t2, ds=""):
         """Create a new record from t1, t2 and maybe ds.
         Does not put it in the store.
@@ -395,9 +417,18 @@ class RecordStore(BaseStore):
         """Get a list of tags from the record.
         If no tags are present, returns a list with one tag: #untagged.
         """
+        # Handle null record
+        if record is None:
+            return ["#untagged"]
+            
         ds = record.get("ds", "")
+        # Handle null description
+        if ds is None:
+            return ["#untagged"]
+            
         if len(ds) == 0:
             return ["#untagged"]
+            
         tags, _ = utils.get_tags_and_parts_from_string(ds)
         if len(tags) == 0:
             return ["#untagged"]

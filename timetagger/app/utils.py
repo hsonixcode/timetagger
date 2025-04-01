@@ -181,6 +181,12 @@ def get_tags_and_parts_from_string(s="", sorted=True):
     A valid tag starts with '#' followed by any alphanumerical characters,
     including dash, underscore, forward slash, and anything above 127.
     """
+    # Ensure s is a string
+    if s is None:
+        s = ""
+    
+    # Convert s to string if it's not already
+    s = str(s)
 
     parts = []
     tags = {}

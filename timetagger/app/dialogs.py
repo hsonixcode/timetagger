@@ -1523,7 +1523,11 @@ class Autocompleter:
         if force or completer_all_tags is None:
             suggested_tags = {}
             for r in window.store.records.get_dump():
-                tags, _ = utils.get_tags_and_parts_from_string(r.ds)
+                # Ensure r.ds is a string
+                ds = r.get("ds", "")
+                if ds is None:
+                    ds = ""
+                tags, _ = utils.get_tags_and_parts_from_string(ds)
                 for tag in tags:
                     suggested_tags[tag] = max(r.t2, suggested_tags[tag] | 0)
             completer_all_tags = suggested_tags
@@ -1540,8 +1544,12 @@ class Autocompleter:
         tags_to_t2 = {}
         descriptions = {}
         for r in records.values():
-            descriptions[r.ds] = max(r.t2, descriptions[r.ds] | 0)
-            tags, _ = utils.get_tags_and_parts_from_string(r.ds)
+            # Ensure r.ds is a string
+            ds = r.get("ds", "")
+            if ds is None:
+                ds = ""
+            descriptions[ds] = max(r.t2, descriptions[ds] | 0)
+            tags, _ = utils.get_tags_and_parts_from_string(ds)
             score = 1 / (t2 - r.t1)
             for tag in tags:
                 tags_to_t2[tag] = max(r.t2, tags_to_t2[tag] | 0)
@@ -1833,7 +1841,7 @@ class RecordDialog(BaseDialog):
     def _show_tags_from_ds(self):
         """Get all current tags. If different, update suggestions."""
         # Show info about current tags in description
-        tags, parts = utils.get_tags_and_parts_from_string(self._ds_input.value)
+        tags, parts = utils.get_tags_and_parts_from_string(to_str(self._ds_input.value))
         tags_html = "Tags:&nbsp; &nbsp;"
         if len(tags) == 0:
             tags = ["#untagged"]
