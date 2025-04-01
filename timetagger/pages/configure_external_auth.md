@@ -53,11 +53,28 @@ function toggleAzureFields() {
     const inputs = fieldsContainer.querySelectorAll('input[type="text"], input[type="password"]');
     
     fieldsContainer.style.opacity = isEnabled ? '1' : '0.5';
+    
     inputs.forEach(input => {
-        if (input.id !== 'azure-redirect-uri') { // Keep redirect URI always visible but controlled by enabled state
-             input.disabled = !isEnabled;
+        if (input.id !== 'azure-redirect-uri') { // Keep redirect URI always visible
+            input.disabled = !isEnabled;
+            
+            // Clear fields when disabled
+            if (!isEnabled) {
+                if (input.id !== 'azure-redirect-uri') { // Don't clear the redirect URI
+                    input.value = '';
+                }
+            }
         }
     });
+    
+    // Show an appropriate message when Azure AD is disabled
+    const statusElement = document.getElementById('save-status');
+    if (!isEnabled) {
+        statusElement.textContent = 'Azure AD Authentication disabled. Click Save to clear the configuration.';
+        statusElement.style.color = '#666';
+    } else {
+        statusElement.textContent = '';
+    }
 }
 
 async function loadAzureConfig() {
@@ -79,7 +96,7 @@ async function loadAzureConfig() {
             throw new Error('Only admin users can access this configuration page.');
         }
 
-        const response = await fetch('/api/v2/app_config', {
+        const response = await fetch('/timetagger/api/v2/app_config', {
             headers: {
                 'authtoken': authToken
             }
@@ -150,11 +167,26 @@ async function saveAzureConfig() {
         }
 
         const isEnabled = document.getElementById('azure-auth-enabled').checked;
+        
+        // If Azure AD is disabled, clear all fields in the UI
+        if (!isEnabled) {
+            document.getElementById('azure-client-id').value = '';
+            document.getElementById('azure-tenant-id').value = '';
+            document.getElementById('azure-client-secret').value = '';
+            // Keep the redirect URI as it might be useful for future setup
+            const redirectUri = document.getElementById('azure-redirect-uri').value.trim() || 
+                                `${window.location.origin}/timetagger/auth/callback`;
+            document.getElementById('azure-redirect-uri').value = redirectUri;
+        }
+        
+        // Get values after potential clearing
         const clientId = document.getElementById('azure-client-id').value.trim();
         const tenantId = document.getElementById('azure-tenant-id').value.trim();
         const clientSecret = document.getElementById('azure-client-secret').value.trim();
-        const redirectUri = document.getElementById('azure-redirect-uri').value.trim();
+        const redirectUri = document.getElementById('azure-redirect-uri').value.trim() || 
+                           `${window.location.origin}/timetagger/auth/callback`;
 
+        // Ensure redirect URI is set
         if (!redirectUri) {
             statusElement.textContent = 'Redirect URI is required.';
             statusElement.style.color = 'red';
@@ -162,15 +194,12 @@ async function saveAzureConfig() {
         }
 
         const configData = {
-            key: 'auth_config',
-            value: {
-                azure_auth_enabled: isEnabled,
-                azure_client_id: clientId,
-                azure_tenant_id: tenantId,
-                azure_client_secret: clientSecret,
-                azure_instance: 'https://login.microsoftonline.com',
-                azure_redirect_uri: redirectUri
-            }
+            azure_auth_enabled: isEnabled,
+            azure_client_id: clientId,
+            azure_tenant_id: tenantId,
+            azure_client_secret: clientSecret,
+            azure_instance: 'https://login.microsoftonline.com',
+            azure_redirect_uri: redirectUri
         };
 
         console.log('Sending config:', JSON.stringify(configData, (key, value) => 
@@ -179,7 +208,7 @@ async function saveAzureConfig() {
         statusElement.textContent = 'Saving configuration...';
         statusElement.style.color = '#666';
 
-        const response = await fetch('/api/v2/app_config', {
+        const response = await fetch('/timetagger/api/v2/app_config', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -202,7 +231,9 @@ async function saveAzureConfig() {
         const result = JSON.parse(responseText);
         console.log("Save successful:", result);
 
-        statusElement.textContent = '✓ Configuration saved successfully!';
+        statusElement.textContent = isEnabled ? 
+            '✓ Configuration saved successfully!' : 
+            '✓ Azure AD Authentication disabled and configuration cleared!';
         statusElement.style.color = 'green';
         setTimeout(() => { 
             if (statusElement.style.color === 'green') {
@@ -265,7 +296,7 @@ async function testAzureConfig() {
         statusElement.textContent = 'Connecting to Azure AD...';
         statusElement.style.color = '#666';
 
-        const response = await fetch('/api/v2/test_azure_config', {
+        const response = await fetch('/timetagger/api/v2/test_azure_config', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

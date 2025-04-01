@@ -521,24 +521,28 @@ async def api_handler_triage(request, path, auth_info, db):
             app_config = get_full_app_config(auth_info)
             return 200, {}, app_config
         elif method == "POST":
-            # Use the synchronous check_admin_status_sync function
-            is_admin, source = check_admin_status_sync(auth_info)
-            if not is_admin:
-                logger.warning(f"Authentication error: Only admin users can update configuration. Admin check source: {source}")
-                return 403, {}, {"error": "Only admin users can update configuration."}
-            logger.info(f"Updating app_config by admin user {auth_info.get('username')}. Admin check source: {source}")
-            
             try:
-                body = await request.json()
-            except json.JSONDecodeError:
-                return 400, {}, {"error": "Invalid JSON in request body"}
+                import json
+                # Read request body as bytes and parse as JSON
+                body_bytes = await request.get_body()
+                try:
+                    body = json.loads(body_bytes.decode())
+                except json.JSONDecodeError as e:
+                    return 400, {}, f"Invalid JSON: {e}. Content: {body_bytes.decode()}"
                 
-            try:
-                update_app_config(auth_info, body)
-                return 200, {}, {"success": True}
+                auth_info = await get_auth_info(request)
+                from timetagger.server.config_api import update_app_config
+                
+                try:
+                    config = update_app_config(auth_info, body)
+                    return 200, {}, json.dumps(config)
+                except ValueError as e:
+                    return 400, {}, f"Error updating app_config: {str(e)}"
+                except AuthException as e:
+                    return 403, {}, f"Authorization error: {str(e)}"
             except Exception as e:
-                logger.error(f"Error updating app_config: {e}")
-                return 500, {}, {"error": str(e)}
+                logger.error(f"Error in app_config endpoint: {str(e)}")
+                return 500, {}, f"Internal server error: {str(e)}"
     # Data API endpoints
     elif path.startswith('data/'):
         # Strip 'data/' part

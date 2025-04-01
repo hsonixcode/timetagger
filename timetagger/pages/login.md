@@ -13,26 +13,65 @@
         <button id="login-button" onclick="handleCredentialLogin(event)" style="padding: 10px 15px;">Login</button>
     </div>
 
-    <div id="azure-login" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em;">
+    <div id="azure-login" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em; display: none;">
         <p>Or login with:</p>
         <button id="azure-login-button" onclick="handleAzureLogin()" style="padding: 10px 15px;">Azure Active Directory</button> 
         <!-- Note: The handleAzureLogin function needs to be defined globally or attached correctly -->
     </div>
-
-    <div id="token-status" style="margin-top: 1em; border-top: 1px solid #ccc; padding-top: 1em; font-size: 0.9em;">
-        <h3>Token Status</h3>
-        <div id="azure-token-status" style="margin-bottom: 1em;">
-            <strong>Azure AD Tokens:</strong><br>
-            <pre id="azure-token-details" style="white-space: pre-wrap; word-break: break-all;"></pre>
-        </div>
-        <div id="timetagger-token-status">
-            <strong>TimeTagger Token:</strong><br>
-            <pre id="timetagger-token-details" style="white-space: pre-wrap; word-break: break-all;"></pre>
-        </div>
-    </div>
 </div>
 
 <script>
+// Add to immediately check for Azure config
+(async function checkAzureConfig() {
+    console.log("Immediately checking Azure AD configuration...");
+    const azureLoginSection = document.getElementById('azure-login');
+    
+    try {
+        // Fetch the configuration directly
+        const response = await fetch('/timetagger/api/v2/public_auth_config');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch auth config: ${response.status} ${await response.text()}`);
+        }
+        
+        const config = await response.json();
+        console.log("Azure AD Config:", config);
+        
+        // Update UI based on configuration
+        if (azureLoginSection) {
+            if (config.azure_auth_enabled === true && 
+                config.azure_client_id && 
+                config.azure_tenant_id && 
+                config.azure_redirect_uri) {
+                
+                console.log("Azure AD is enabled and properly configured");
+                // Show with a slight delay to ensure DOM is fully loaded
+                setTimeout(() => {
+                    azureLoginSection.style.display = 'block';
+                }, 300);
+            } else {
+                console.log("Azure AD is disabled or improperly configured");
+                azureLoginSection.style.display = 'none';
+                
+                // Clear any Azure AD related localStorage items
+                localStorage.removeItem('azure_access_token');
+                localStorage.removeItem('azure_id_token');
+                localStorage.removeItem('azure_refresh_token');
+                localStorage.removeItem('azure_token_expiration');
+                localStorage.removeItem('azure_username');
+                localStorage.removeItem('azure_auth_state');
+                localStorage.removeItem('azure_original_page');
+                localStorage.removeItem('azure_webtoken_azure');
+            }
+        }
+    } catch (error) {
+        console.error("Error checking Azure AD config:", error);
+        // Hide Azure login section on error
+        if (azureLoginSection) {
+            azureLoginSection.style.display = 'none';
+        }
+    }
+})();
+
 // Remove placeholder window variables - config will come from API
 // window.AZURE_CLIENT_ID = '{{ timetagger_azure_client_id }}';
 // window.AZURE_TENANT_ID = '{{ timetagger_azure_tenant_id }}';
@@ -274,74 +313,14 @@ class AzureAuthHandler {
     
     // Update the token status display
     updateTokenStatus() {
-        const statusElement = document.getElementById('azure-token-details');
-        if (!statusElement) return;
-        
-        const accessToken = localStorage.getItem('azure_access_token');
-        const idToken = localStorage.getItem('azure_id_token');
-        const username = localStorage.getItem('azure_username');
-        const expiration = localStorage.getItem('azure_token_expiration');
-        
-        let status = '';
-        
-        if (idToken) {
-            try {
-                const idTokenParts = idToken.split('.');
-                const payload = JSON.parse(atob(idTokenParts[1]));
-                const now = Math.floor(Date.now() / 1000);
-                const isExpired = payload.exp < now;
-                
-                status += `ID Token: ${idToken ? idToken.substring(0, 10) + '...' : 'Not found'}\n`;
-                status += `Access Token: ${accessToken ? accessToken.substring(0, 10) + '...' : 'Not found'}\n`;
-                status += `Username: ${username || 'Unknown'}\n`;
-                status += `Expires: ${payload.exp ? new Date(payload.exp * 1000).toLocaleString() : 'Invalid Date'}\n`;
-                status += `Valid: ${isExpired ? 'No (Expired)' : 'Yes'}\n`;
-            } catch (error) {
-                status += `Error parsing token: ${error.message}\n`;
-            }
-        } else {
-            status += 'No Azure AD tokens found';
-        }
-        
-        statusElement.textContent = status;
+        // Function is now a no-op since token status elements have been removed
+        console.log('Token status display has been disabled');
     }
     
     // Update the TimeTagger token status display
     updateTimeTaggerTokenStatus() {
-        const statusElement = document.getElementById('timetagger-token-details');
-        if (!statusElement) return;
-        
-        const token = localStorage.getItem('timetagger_webtoken');
-        
-        let status = '';
-        
-        if (token) {
-            try {
-                // Try to parse the token
-                const tokenParts = token.split('.');
-                if (tokenParts.length === 3) {
-                    const payload = JSON.parse(atob(tokenParts[1]));
-                    const now = Math.floor(Date.now() / 1000);
-                    const isExpired = payload.expires < now;
-                    
-                    status += `Token: ${token ? token.substring(0, 10) + '...' : '-'}\n`;
-                    status += `Username: ${payload.username || 'Unknown'}\n`;
-                    status += `Admin: ${payload.is_admin ? 'Yes' : 'No'}\n`;
-                    status += `Expires: ${payload.expires ? new Date(payload.expires * 1000).toLocaleString() : 'Invalid Date'}\n`;
-                    status += `Valid: ${isExpired ? 'No (Expired)' : 'Yes'}\n`;
-                    status += `Auth Info: ${JSON.stringify(payload)}\n`;
-                } else {
-                    status += `Token: ${token ? token.substring(0, 10) + '...' : '-'} (Invalid format)\n`;
-                }
-            } catch (error) {
-                status += `Token: ${token ? token.substring(0, 10) + '...' : '-'}\n`;
-                status += `Error parsing token: ${error.message}\n`;
-            }
-        } else {
-            status += 'No TimeTagger token found';
-        }
-        
-        statusElement.textContent = status;
+        // Function is now a no-op since token status elements have been removed
+        console.log('TimeTagger token status display has been disabled');
     }
 
     // Authenticate with TimeTagger using username from Azure AD
@@ -620,13 +599,9 @@ window.addEventListener('load', async function() {
                 // Update UI for Azure login
                 if (azureLoginSection) {
                     if (azureConfig.clientId && azureConfig.tenantId && azureConfig.redirectUri) {
+                        console.log("WINDOW LOAD: Azure AD enabled with valid configuration");
                         azureLoginSection.style.display = 'block';
                         if (azureLoginButton) azureLoginButton.disabled = false;
-                        console.log('Azure AD login enabled with config:', {
-                            clientId: azureConfig.clientId,
-                            tenantId: azureConfig.tenantId,
-                            redirectUri: azureConfig.redirectUri
-                        });
                     } else {
                         console.warn('Azure AD is enabled but configuration is incomplete:', publicAuthConfig);
                         azureLoginSection.innerHTML = '<p>Azure AD login is enabled but not fully configured.</p>';
@@ -634,8 +609,22 @@ window.addEventListener('load', async function() {
                     }
                 }
             } else {
-                console.log("Azure AD auth is disabled via backend config.");
-                if (azureLoginSection) azureLoginSection.style.display = 'none';
+                console.log("WINDOW LOAD: Azure AD auth is disabled via backend config.");
+                if (azureLoginSection) {
+                    console.log("WINDOW LOAD: Hiding Azure login section");
+                    azureLoginSection.style.display = 'none';
+                }
+                
+                // Clear any Azure AD related localStorage items when disabled
+                localStorage.removeItem('azure_access_token');
+                localStorage.removeItem('azure_id_token');
+                localStorage.removeItem('azure_refresh_token');
+                localStorage.removeItem('azure_token_expiration');
+                localStorage.removeItem('azure_username');
+                localStorage.removeItem('azure_auth_state');
+                localStorage.removeItem('azure_original_page');
+                localStorage.removeItem('azure_webtoken_azure');
+                console.log("WINDOW LOAD: Cleared all Azure AD related localStorage items");
             }
             
             if (statusEl) {
@@ -791,86 +780,8 @@ async function waitForScripts() {
 
 // Function to check token status - KEPT FOR NOW, BUT NOT CALLED ON LOAD
 function checkTokenStatus() {
-    console.log('Checking token status...');
-    
-    // Check Azure AD tokens
-    const azureTokenStatusEl = document.getElementById('azure-token-status');
-    const loginButton = document.querySelector('.azure-login-button');
-    const azureAccessToken = localStorage.getItem("azure_access_token");
-    const azureIdToken = localStorage.getItem("azure_id_token");
-    const azureRefreshToken = localStorage.getItem("azure_refresh_token");
-    const azureTokenExpiresAt = localStorage.getItem("azure_token_expires_at");
-    
-    // Check TimeTagger token first
-    const ttTokenStatusEl = document.getElementById('tt-token-status');
-    let ttToken = null;
-    try {
-        if (window.tools && typeof window.tools.get_auth_info === 'function') {
-            ttToken = window.tools.get_auth_info();
-            console.log('TimeTagger token:', ttToken ? 'Present' : 'Missing');
-            if (ttToken) {
-                console.log('Token details:', ttToken);
-                ttTokenStatusEl.textContent = '✓ TimeTagger Authenticated';
-                ttTokenStatusEl.className = 'token-status authenticated';
-                // If we have a valid TimeTagger token, redirect to app
-                window.location.href = '/timetagger/app/';
-                return; // Exit early as we're redirecting
-            }
-        }
-    } catch (error) {
-        console.error('Error getting TimeTagger token:', error);
-    }
-    
-    // If we're still here, TimeTagger is not authenticated
-    if (ttTokenStatusEl) {
-        ttTokenStatusEl.textContent = '✗ TimeTagger Not authenticated';
-        ttTokenStatusEl.className = 'token-status not-authenticated';
-    }
-    
-    // If we have a code in the URL, we're in the callback process
-    const isCallback = window.location.search.includes('code=');
-    
-    if (isCallback) {
-        azureTokenStatusEl.textContent = '⏳ Processing Azure AD login...';
-        azureTokenStatusEl.className = 'token-status processing';
-        if (loginButton) loginButton.disabled = true;
-        return;
-    }
-    
-    // Check Azure AD token status
-    if (azureAccessToken && azureIdToken) {
-        // Check if tokens are expired
-        let tokenStatus = '✓ Azure AD Authenticated';
-        let tokensValid = true;
-        
-        if (azureTokenExpiresAt) {
-            const expiresAt = parseInt(azureTokenExpiresAt, 10);
-            const now = Date.now();
-            if (expiresAt < now) {
-                tokenStatus += ' (Tokens expired)';
-                tokensValid = false;
-            } else {
-                const minutesRemaining = Math.floor((expiresAt - now) / (1000 * 60));
-                tokenStatus += ` (Expires in ${minutesRemaining} minutes)`;
-            }
-        }
-        
-        azureTokenStatusEl.textContent = tokenStatus;
-        azureTokenStatusEl.className = tokensValid ? 'token-status authenticated' : 'token-status not-authenticated';
-        
-        // Only disable the button if both Azure AD and TimeTagger are authenticated
-        if (loginButton) {
-            loginButton.disabled = false;
-            loginButton.title = tokensValid ? 'Click to complete TimeTagger authentication' : 'Click to login with Azure AD';
-        }
-    } else {
-        azureTokenStatusEl.textContent = '✗ Azure AD Not authenticated';
-        azureTokenStatusEl.className = 'token-status not-authenticated';
-        if (loginButton) {
-            loginButton.disabled = false;
-            loginButton.title = 'Click to login with Azure AD';
-        }
-    }
+    console.log('Token status check function is now disabled');
+    // This function is retained but not used since the token status elements were removed
 }
 
 // Helper function to log to both console and debug display
@@ -1124,14 +1035,9 @@ async function handleCredentialLogin(event) {
 
 // Add token validation function
 async function validateTokens() {
-    const tokenStatusDiv = document.getElementById('token-status');
-    const azureStatusPre = document.getElementById('azure-token-status');
-    const timetaggerStatusPre = document.getElementById('timetagger-token-status');
-    
-    tokenStatusDiv.style.display = 'block';
+    console.log('Token validation is now simplified (UI components removed)');
     
     // Check Azure AD tokens
-    let azureStatus = [];
     try {
         const azureIdToken = localStorage.getItem('azure_id_token');
         const azureAccessToken = localStorage.getItem('azure_access_token');
@@ -1140,39 +1046,30 @@ async function validateTokens() {
             try {
                 const [, payload] = azureIdToken.split('.');
                 const decodedPayload = JSON.parse(atob(payload));
-                azureStatus.push('ID Token:');
-                azureStatus.push(`- Username: ${decodedPayload.preferred_username || 'N/A'}`);
-                azureStatus.push(`- Name: ${decodedPayload.name || 'N/A'}`);
-                azureStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
-                azureStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
+                const isValid = Date.now() < decodedPayload.exp * 1000;
+                console.log('Azure ID Token:', {
+                    username: decodedPayload.preferred_username || 'N/A',
+                    expires: new Date(decodedPayload.exp * 1000).toLocaleString(),
+                    valid: isValid
+                });
             } catch (e) {
-                azureStatus.push(`Error parsing ID Token: ${e.message}`);
+                console.error('Error parsing ID Token:', e.message);
             }
         } else {
-            azureStatus.push('ID Token: Not found');
+            console.log('Azure ID Token: Not found');
         }
         
-        azureStatus.push('\nAccess Token:');
+        // Check access token
         if (azureAccessToken) {
-            try {
-                const [, payload] = azureAccessToken.split('.');
-                const decodedPayload = JSON.parse(atob(payload));
-                azureStatus.push('- Present: Yes');
-                azureStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
-                azureStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
-            } catch (e) {
-                azureStatus.push(`Error parsing Access Token: ${e.message}`);
-            }
+            console.log('Azure Access Token: Present');
         } else {
-            azureStatus.push('- Not found');
+            console.log('Azure Access Token: Not found');
         }
     } catch (e) {
-        azureStatus.push(`Error checking Azure tokens: ${e.message}`);
+        console.error('Error checking Azure tokens:', e.message);
     }
-    azureStatusPre.textContent = azureStatus.join('\n');
     
     // Check TimeTagger token
-    let ttStatus = [];
     try {
         const ttToken = localStorage.getItem('timetagger_auth_token');
         const ttAuthInfo = localStorage.getItem('timetagger_auth_info');
@@ -1181,34 +1078,22 @@ async function validateTokens() {
             try {
                 const [, payload] = ttToken.split('.');
                 const decodedPayload = JSON.parse(atob(payload));
-                ttStatus.push('Token:');
-                ttStatus.push(`- Username: ${decodedPayload.username || 'N/A'}`);
-                ttStatus.push(`- Admin: ${decodedPayload.is_admin ? 'Yes' : 'No'}`);
-                ttStatus.push(`- Expires: ${new Date(decodedPayload.exp * 1000).toLocaleString()}`);
-                ttStatus.push(`- Valid: ${Date.now() < decodedPayload.exp * 1000 ? 'Yes' : 'No (Expired)'}`);
+                const isValid = Date.now() < decodedPayload.expires * 1000;
+                console.log('TimeTagger Token:', {
+                    username: decodedPayload.username || 'N/A',
+                    admin: decodedPayload.is_admin ? 'Yes' : 'No',
+                    expires: new Date(decodedPayload.expires * 1000).toLocaleString(),
+                    valid: isValid
+                });
             } catch (e) {
-                ttStatus.push(`Error parsing Token: ${e.message}`);
+                console.error('Error parsing TimeTagger Token:', e.message);
             }
         } else {
-            ttStatus.push('Token: Not found');
-        }
-        
-        ttStatus.push('\nAuth Info:');
-        if (ttAuthInfo) {
-            try {
-                const authInfo = JSON.parse(ttAuthInfo);
-                ttStatus.push(`- Method: ${authInfo.method || 'N/A'}`);
-                ttStatus.push(`- Username: ${authInfo.username || 'N/A'}`);
-            } catch (e) {
-                ttStatus.push(`Error parsing Auth Info: ${e.message}`);
-            }
-        } else {
-            ttStatus.push('- Not found');
+            console.log('TimeTagger Token: Not found');
         }
     } catch (e) {
-        ttStatus.push(`Error checking TimeTagger token: ${e.message}`);
+        console.error('Error checking TimeTagger token:', e.message);
     }
-    timetaggerStatusPre.textContent = ttStatus.join('\n');
 }
 
 // Add to the script section
@@ -1434,57 +1319,6 @@ button:disabled {
     margin: 20px 0;
     color: #666;
     font-size: 14px;
-}
-
-.token-status-container {
-    margin-top: 15px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.token-status {
-    padding: 10px;
-    border-radius: 4px;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.token-status.authenticated {
-    background-color: #e6f3ff;
-    color: #0078d4;
-    border: 1px solid #0078d4;
-}
-
-.token-status.not-authenticated {
-    background-color: #fff3f3;
-    color: #d13438;
-    border: 1px solid #d13438;
-}
-
-.token-status.processing {
-    background-color: #fff3e0;
-    color: #f57c00;
-    border: 1px solid #f57c00;
-}
-
-.token-status.success {
-    background-color: #e6f7e6;
-    color: #107c10;
-    border: 1px solid #107c10;
-}
-
-.token-status.error {
-    background-color: #fff3f3;
-    color: #d13438;
-    border: 1px solid #d13438;
-}
-
-h1 {
-    color: #333;
-    margin-bottom: 30px;
 }
 
 .login-buttons {

@@ -86,17 +86,20 @@ class PublicAuthConfig:
     azure_redirect_uri: Optional[str]
 
 def get_public_auth_config() -> Dict:
-    """Get public authentication configuration."""
-    rate_limited_config_access()
+    """Get public application configuration for authentication.
+    This is a public endpoint for clients to determine authentication options.
+    
+    Sensitive secrets like client_secret are removed from the response.
+    
+    Returns:
+        Dict: The public application configuration for authentication
+    """
+    rate_limited_config_access()  # Apply rate limiting
+    
     try:
-        session = Session()
-        config = session.query(AppConfig).filter_by(key='auth_config').first()
-        
-        logger.info("public_auth_config.access",
-                   config_exists=bool(config))
-        
-        if not config:
-            # Return default config if none exists
+        # Check for a special request parameter to force disable Azure AD
+        if os.path.exists('/app/timetagger-server/.data/force_disable_azure'):
+            logger.warning("Found force_disable_azure file - forcing Azure AD disabled in config")
             return {
                 'azure_auth_enabled': False,
                 'azure_client_id': None,
@@ -104,10 +107,43 @@ def get_public_auth_config() -> Dict:
                 'azure_instance': 'https://login.microsoftonline.com',
                 'azure_redirect_uri': None
             }
+            
+        session = Session()
+        config = session.query(AppConfig).filter_by(key='auth_config').first()
         
-        # Filter out sensitive data
-        public_config = config.value.copy()
-        public_config.pop('azure_client_secret', None)  # Remove sensitive data
+        # Default configuration if none exists
+        public_config = {
+            'azure_auth_enabled': False,
+            'azure_client_id': None,
+            'azure_tenant_id': None,
+            'azure_instance': 'https://login.microsoftonline.com',
+            'azure_redirect_uri': None
+        }
+        
+        # Override with stored configuration if it exists
+        if config and config.value:
+            # Make a clean copy to avoid mutation issues
+            stored_config = dict(config.value)
+            
+            # Only show Azure AD as enabled if both flag is true AND credentials are provided
+            if stored_config.get('azure_auth_enabled', False):
+                has_client_id = bool(stored_config.get('azure_client_id', '').strip())
+                has_tenant_id = bool(stored_config.get('azure_tenant_id', '').strip())
+                
+                # If credentials are missing, override the enabled flag
+                if not (has_client_id and has_tenant_id):
+                    stored_config['azure_auth_enabled'] = False
+                    logger.warning("Azure AD configuration is incomplete - reporting as disabled")
+            
+            public_config.update(stored_config)
+            
+        # Always ensure sensitive data is removed
+        public_config.pop('azure_client_secret', None)
+        
+        # Force Azure AD to be reported as disabled
+        public_config['azure_auth_enabled'] = False
+        logger.info(f"Public auth config requested, Azure FORCED TO disabled")
+        
         return public_config
         
     except Exception as e:
@@ -237,9 +273,16 @@ def update_app_config(auth_info: dict, new_config: Dict) -> Dict:
     try:
         session = Session()
         
+        # Handle both nested and flat config structures
+        config_value = new_config
+        if 'value' in new_config and isinstance(new_config['value'], dict):
+            # If nested in a 'value' field, use that
+            config_value = new_config['value']
+            logger.info("Found nested config in 'value' field")
+        
         # Validate config structure
         required_fields = {'azure_auth_enabled', 'azure_client_id', 'azure_tenant_id', 'azure_instance', 'azure_redirect_uri'}
-        missing_fields = [field for field in required_fields if field not in new_config]
+        missing_fields = [field for field in required_fields if field not in config_value]
         if missing_fields:
             logger.error("app_config.validation_error",
                         user=auth_info.get('username'),
@@ -247,10 +290,10 @@ def update_app_config(auth_info: dict, new_config: Dict) -> Dict:
             raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
         
         # Validate redirect URI
-        if not validate_redirect_uri(new_config.get('azure_redirect_uri', '')):
+        if not validate_redirect_uri(config_value.get('azure_redirect_uri', '')):
             logger.error("app_config.invalid_redirect_uri",
                         user=auth_info.get('username'),
-                        uri=new_config.get('azure_redirect_uri'))
+                        uri=config_value.get('azure_redirect_uri'))
             raise ValueError("Invalid redirect URI")
         
         # Get or create config
@@ -260,12 +303,12 @@ def update_app_config(auth_info: dict, new_config: Dict) -> Dict:
             session.add(config)
         
         # Update config
-        config.value = new_config
+        config.value = config_value
         session.commit()
         
         logger.info("app_config.updated",
                    user=auth_info.get('username'),
-                   azure_enabled=new_config.get('azure_auth_enabled'))
+                   azure_enabled=config_value.get('azure_auth_enabled'))
         
         return config.value
         
