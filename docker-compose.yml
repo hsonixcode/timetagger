@@ -3,16 +3,16 @@ services:
   postgres:
     image: postgres:13
     environment:
-      - POSTGRES_USER=timetagger
-      - POSTGRES_PASSWORD=timetagger
-      - POSTGRES_DB=timetagger
+      - POSTGRES_USER=${POSTGRES_USER:-timetagger}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-timetagger}
+      - POSTGRES_DB=${POSTGRES_DB:-timetagger}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U timetagger"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-timetagger}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,7 +30,7 @@ services:
       - TIMETAGGER_LOG_LEVEL=${TIMETAGGER_LOG_LEVEL:-info}
       - TIMETAGGER_CREDENTIALS=${TIMETAGGER_CREDENTIALS}
       # PostgreSQL connection
-      - TIMETAGGER_DB_URL=postgresql://timetagger:timetagger@postgres:5432/timetagger
+      - TIMETAGGER_DB_URL=${TIMETAGGER_DB_URL}
       # Azure authentication is configured through the External Auth UI
     depends_on:
       postgres:

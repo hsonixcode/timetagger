@@ -19,9 +19,8 @@ class Config:
     * `log_level (str)`: the log level for timetagger and asgineer
       (not the asgi server). Default "info".
     * `credentials (str)`: login credentials for one or more users, in the
-      form "user1:hash1,user2:hash2" where each hash is a salted hash (BCrypt)
-      of the password. Used in the default startup script ``__main__.py``.
-      You can generate credentials with https://timetagger.app/cred.
+      form "user1:password1,user2:password2" where each password is stored in plain text.
+      Used in the default startup script ``__main__.py``.
     * `proxy_auth_enabled (bool)`: enables authentication from a reverse proxy
       (for example Authelia). Default "False".
     * `proxy_auth_trusted (str)`: list of trusted reverse proxy IPs with or without CIDR, in the

@@ -28,12 +28,15 @@ from base64 import b64decode
 from importlib import resources
 import jinja2
 import time
+import asyncio
+import iptools
+import httpx
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple, Union
 
-import bcrypt
 import asgineer
 import itemdb
 import pscript
-import iptools
 import timetagger
 from timetagger import config
 from timetagger.server import (
@@ -44,7 +47,6 @@ from timetagger.server import (
     create_assets_from_dir,
     enable_service_worker,
 )
-import httpx
 
 # Import our multiuser API handlers - change from relative to absolute import
 from timetagger.multiuser.api import get_users, search_users, update_user_access, get_login_users, backfill_login_database, debug_azure_users, update_user_role
@@ -1145,7 +1147,7 @@ async def get_webtoken_proxy(request, auth_info):
 
 async def get_webtoken_usernamepassword(request, auth_info):
     """An authentication handler that provides a webtoken when the
-    user provides the correct username and password hash as listed in
+    user provides the correct username and password as listed in
     the server config (`config.credentials`). See `get_webtoken_unsafe()` for details.
     """
     logger.info("Starting get_webtoken_usernamepassword")
@@ -1155,14 +1157,13 @@ async def get_webtoken_usernamepassword(request, auth_info):
     if not (username and password):
         logger.warning("Username or password missing in request")
         return 400, {}, "bad request: username or password missing"
-    # Get hash from config
-    hash = CREDENTIALS.get(username, "")
-    if not hash:
+    # Get stored password from config
+    stored_password = CREDENTIALS.get(username, "")
+    if not stored_password:
         logger.warning(f"Username '{username}' not found in credentials")
         return 403, {}, "forbidden: invalid credentials"
-    # Check the hash!
-    # Note that bcrypt handles the salt internally.
-    if not bcrypt.checkpw(password.encode(), hash.encode()):
+    # Check the password (plain text comparison)
+    if password != stored_password:
         logger.warning(f"Password check failed for user '{username}'")
         return 403, {}, "forbidden: invalid credentials"
     
@@ -1289,10 +1290,15 @@ async def validate_auth(request, auth_info):
 
 
 def load_credentials():
+    """Load credentials from config.credentials.
+    The format is 'username:password' with multiple entries separated by commas or semicolons.
+    Passwords are stored in plain text.
+    """
     d = {}
     for s in config.credentials.replace(";", ",").split(","):
-        name, _, hash = s.partition(":")
-        d[name] = hash
+        name, _, password = s.partition(":")
+        if name and password:  # Only add if both username and password are present
+            d[name] = password
     return d
 
 
