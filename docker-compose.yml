@@ -21,7 +21,6 @@ services:
     build:
       context: https://github.com/hsonixcode/timetagger.git#main
       dockerfile: Dockerfile
-    image: timetagger:latest
     ports:
       - "8000:8000"
     volumes:
