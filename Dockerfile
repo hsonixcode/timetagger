@@ -11,12 +11,12 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Clone the repository with submodules
-RUN git clone --recursive https://github.com/hsonixcode/timetagger.git .
-
-# Install Python dependencies
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
+COPY . .
 
 # Install the package in editable mode
 RUN pip install -e .

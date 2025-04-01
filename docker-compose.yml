@@ -19,12 +19,13 @@ services:
 
   timetagger:
     build:
-      context: .
+      context: https://github.com/hsonixcode/timetagger.git#main
       dockerfile: Dockerfile
+    image: timetagger:latest
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - timetagger_data:/app/data
     environment:
       - TIMETAGGER_BIND=${TIMETAGGER_BIND:-0.0.0.0:8000}
       - TIMETAGGER_LOG_LEVEL=${TIMETAGGER_LOG_LEVEL:-info}
@@ -39,4 +40,6 @@ services:
 
 volumes:
   # This named volume ensures PostgreSQL data persists across container restarts
-  postgres_data: 
+  postgres_data:
+  # This named volume ensures TimeTagger data persists across container restarts
+  timetagger_data: 
