@@ -57,6 +57,9 @@ from timetagger.multiuser import api
 from timetagger.multiuser.auth_utils import check_admin_status_sync
 from timetagger.server.config_api import get_full_app_config, update_app_config
 
+# Import database initialization functions
+from timetagger.server.db_utils import initialize_database, get_engine
+
 # Import default_template and md2html from the server module
 from timetagger.server._assets import default_template, md2html
 
@@ -1455,6 +1458,16 @@ async def get_username_from_proxy(request):
 
 
 if __name__ == "__main__":
+    # Initialize the database before starting the server
+    try:
+        logger.info("Initializing database...")
+        initialize_database()
+        logger.info("Database initialization complete")
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
+        logger.info("Continuing startup despite database initialization error")
+    
+    # Start the server
     asgineer.run(
         "timetagger.__main__:main_handler", "uvicorn", config.bind, log_level="debug"
     )

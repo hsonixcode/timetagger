@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     git \
     gcc \
     libpq-dev \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -17,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
+
+# Make entrypoint script executable
+RUN chmod +x /app/docker-entrypoint.sh
 
 # Install the package in editable mode
 RUN pip install -e .
@@ -36,5 +40,5 @@ ENV PATH="/home/timetagger/.local/bin:${PATH}"
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["python", "-m", "timetagger"] 
+# Use our custom entrypoint script
+ENTRYPOINT ["/app/docker-entrypoint.sh"] 

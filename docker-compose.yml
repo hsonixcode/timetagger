@@ -16,7 +16,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    command: postgres -c 'password_encryption=scram-sha-256'
+    command: postgres -c 'password_encryption=md5'
 
   timetagger:
     build:

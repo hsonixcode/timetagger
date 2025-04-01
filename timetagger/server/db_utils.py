@@ -14,6 +14,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import text
+import sqlalchemy as sa
 
 # Set up logger
 logger = logging.getLogger("timetagger.server.db_utils")
@@ -170,14 +171,63 @@ def get_session() -> Session:
 def initialize_database():
     """
     Initialize the database, creating all tables.
+    This function is idempotent and can be called multiple times safely.
+    It will check for each required table and create it if it doesn't exist.
     """
+    logger.info("Starting database initialization")
     engine = get_engine()
-    # Only create tables that don't exist yet
-    Base.metadata.create_all(engine)
-    logger.info("Database initialized with all tables created")
     
-    # Run migration to update existing tables if needed
-    migrate_database()
+    try:
+        # Create connection to verify database is accessible
+        with engine.connect() as conn:
+            logger.info("Successfully connected to the database")
+        
+        # Check if tables exist and create them if they don't
+        inspector = sa.inspect(engine)
+        existing_tables = inspector.get_table_names()
+        logger.info(f"Existing tables: {existing_tables}")
+        
+        # Create metadata for all defined models
+        metadata = Base.metadata
+        
+        # Check and create each table individually if it doesn't exist
+        for table_name, table in metadata.tables.items():
+            if table_name not in existing_tables:
+                logger.info(f"Creating missing table: {table_name}")
+                table.create(engine, checkfirst=True)
+            else:
+                logger.info(f"Table already exists: {table_name}")
+        
+        # Run additional migration for specific tables
+        migrate_database()
+        
+        # Create the userinfo_key_value table if it doesn't exist
+        if 'userinfo_key_value' not in existing_tables:
+            logger.info("Creating userinfo_key_value table")
+            with engine.connect() as connection:
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS userinfo_key_value (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR NOT NULL,
+                        key VARCHAR NOT NULL,
+                        value TEXT,
+                        mt FLOAT,
+                        st FLOAT,
+                        UNIQUE(username, key)
+                    )
+                """))
+                
+                connection.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_userinfo_key_value_username_key 
+                    ON userinfo_key_value (username, key)
+                """))
+        
+        logger.info("Database initialization completed successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error during database initialization: {str(e)}")
+        # Re-raise the exception for the caller to handle
+        raise
 
 def migrate_database():
     """
