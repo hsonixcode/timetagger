@@ -215,14 +215,25 @@ def get_full_app_config(auth_info: dict, bypass_admin_check: bool = False) -> Di
 
 def validate_redirect_uri(uri: str) -> bool:
     """Validate the redirect URI against allowed domains."""
-    allowed_domains = [
-        "localhost",
-        "127.0.0.1",
-        # Add your production domains here
-    ]
-    from urllib.parse import urlparse
-    parsed = urlparse(uri)
-    return any(domain in parsed.netloc for domain in allowed_domains)
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(uri)
+        
+        # Check if the URI has a scheme and netloc (domain)
+        if not parsed.scheme or not parsed.netloc:
+            logger.warning(f"Invalid redirect URI format: {uri}")
+            return False
+            
+        # Ensure the scheme is http or https
+        if parsed.scheme not in ('http', 'https'):
+            logger.warning(f"Invalid redirect URI scheme: {parsed.scheme}")
+            return False
+            
+        # Accept any domain as long as the URI format is valid
+        return True
+    except Exception as e:
+        logger.error(f"Error validating redirect URI: {str(e)}")
+        return False
 
 def update_app_config(auth_info: dict, new_config: Dict) -> Dict:
     """Update application configuration.
