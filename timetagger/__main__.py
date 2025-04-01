@@ -58,6 +58,51 @@ from timetagger.server.config_api import get_full_app_config, update_app_config
 # Import default_template and md2html from the server module
 from timetagger.server._assets import default_template, md2html
 
+
+# Helper function to extract auth info from request
+async def get_auth_info(request):
+    """Extract authentication information from the request.
+    Returns a dict with authentication details.
+    """
+    auth_info = {}
+    
+    # Get authtoken from header
+    authtoken = request.headers.get('authtoken', '')
+    if authtoken:
+        # Try to decode the token to get user information
+        try:
+            # Split the token into parts
+            parts = authtoken.split('.')
+            if len(parts) >= 2:
+                # The payload is the second part
+                payload = parts[1]
+                # Ensure correct padding for base64 decoding
+                payload += '=' * (-len(payload) % 4)
+                # Decode the payload
+                decoded = base64.urlsafe_b64decode(payload).decode('utf-8')
+                token_data = json.loads(decoded)
+                
+                # Extract relevant user information
+                auth_info['username'] = token_data.get('username', '')
+                auth_info['is_admin'] = token_data.get('is_admin', False)
+                auth_info['token'] = authtoken
+                
+                logging.info(f"Extracted auth info from token: username={auth_info['username']}, is_admin={auth_info['is_admin']}")
+            else:
+                logging.warning("Invalid token format: not enough parts")
+        except Exception as e:
+            logging.error(f"Error extracting auth info from token: {str(e)}")
+    
+    # If no username from token, try proxy auth
+    if not auth_info.get('username') and config.proxy_auth_enabled:
+        proxy_username = await get_username_from_proxy(request)
+        if proxy_username:
+            auth_info['username'] = proxy_username
+            logging.info(f"Using username from proxy: {proxy_username}")
+    
+    return auth_info
+
+
 # Special hooks exit early
 if __name__ == "__main__" and len(sys.argv) >= 2:
     if sys.argv[1] in ("--version", "version"):
@@ -530,7 +575,43 @@ async def api_handler_triage(request, path, auth_info, db):
                 except json.JSONDecodeError as e:
                     return 400, {}, f"Invalid JSON: {e}. Content: {body_bytes.decode()}"
                 
-                auth_info = await get_auth_info(request)
+                # Extract auth info directly
+                auth_info = {}
+                
+                # Get authtoken from header
+                authtoken = request.headers.get('authtoken', '')
+                if authtoken:
+                    # Try to decode the token to get user information
+                    try:
+                        # Split the token into parts
+                        parts = authtoken.split('.')
+                        if len(parts) >= 2:
+                            # The payload is the second part
+                            payload = parts[1]
+                            # Ensure correct padding for base64 decoding
+                            payload += '=' * (-len(payload) % 4)
+                            # Decode the payload
+                            decoded = base64.urlsafe_b64decode(payload).decode('utf-8')
+                            token_data = json.loads(decoded)
+                            
+                            # Extract relevant user information
+                            auth_info['username'] = token_data.get('username', '')
+                            auth_info['is_admin'] = token_data.get('is_admin', False)
+                            auth_info['token'] = authtoken
+                            
+                            logger.info(f"Extracted auth info from token: username={auth_info['username']}, is_admin={auth_info['is_admin']}")
+                        else:
+                            logger.warning("Invalid token format: not enough parts")
+                    except Exception as e:
+                        logger.error(f"Error extracting auth info from token: {str(e)}")
+                
+                # If no username from token, try proxy auth
+                if not auth_info.get('username') and config.proxy_auth_enabled:
+                    proxy_username = await get_username_from_proxy(request)
+                    if proxy_username:
+                        auth_info['username'] = proxy_username
+                        logger.info(f"Using username from proxy: {proxy_username}")
+                
                 from timetagger.server.config_api import update_app_config
                 
                 try:

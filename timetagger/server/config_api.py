@@ -140,9 +140,7 @@ def get_public_auth_config() -> Dict:
         # Always ensure sensitive data is removed
         public_config.pop('azure_client_secret', None)
         
-        # Force Azure AD to be reported as disabled
-        public_config['azure_auth_enabled'] = False
-        logger.info(f"Public auth config requested, Azure FORCED TO disabled")
+        logger.info(f"Public auth config requested, Azure status: {public_config['azure_auth_enabled']}")
         
         return public_config
         
