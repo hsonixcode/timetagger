@@ -35,7 +35,8 @@ The server runs on async Python using
 [uvicorn](https://github.com/encode/uvicorn) and
 [asgineer](https://github.com/almarklein/asgineer) - which is fun and bloody fast.
 It uses SQLite via [itemdb](https://github.com/almarklein/itemdb) to
-store the data, making it easy to deploy.
+store the data, making it easy to deploy. Alternatively, you can use PostgreSQL
+for more robust database functionality in multi-user environments.
 
 The client is a mix of HTML, CSS, Markdown, and ... Python!
 [PScript](https://github.com/flexxui/pscript) is used to compile the
@@ -160,3 +161,46 @@ Then these commands can be used during development:
 * `invoke format` to autoformat the code (using black)
 * `invoke lint` to detect linting errors (using flake8)
 * `invoke tests` to run tests (using pytest)
+
+
+## Contributing
+
+We welcome contributions to TimeTagger! If you're interested in helping improve the project, please check out our [contribution guidelines](docs/CONTRIBUTING.md) for information on code style, linting requirements, and the pull request process.
+
+### Code Quality
+
+TimeTagger includes tools to help maintain code quality:
+
+- Run `python scripts/lint_code.py` to check for common issues
+- Run `python scripts/lint_code.py --fix` to automatically fix some problems
+- Use `python -m invoke format` to format code with Black
+- Use `python -m invoke lint` to check code style with flake8
+- Use `python -m invoke tests` to run the test suite
+
+
+## Database Options
+
+TimeTagger supports two database options:
+
+### SQLite (Default)
+For single-user instances or smaller deployments, SQLite provides a simple, file-based database solution. This is the default configuration and requires minimal setup.
+
+### PostgreSQL
+For multi-user environments or larger deployments, PostgreSQL offers better performance, concurrency, and reliability. To use PostgreSQL:
+
+1. Configure your database connection in your `.env` file:
+```
+POSTGRES_USER=timetagger
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_DB=timetagger
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+TIMETAGGER_DB_URL=postgresql://timetagger:your_secure_password@localhost:5432/timetagger
+```
+
+2. Run the migration script if you're transitioning from SQLite:
+```
+python scripts/migrate_to_postgres.py --all --login-db --validate
+```
+
+See the [documentation](docs/postgres.md) for more details on database configuration options.

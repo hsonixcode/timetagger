@@ -160,32 +160,42 @@ def check_admin_status_sync(auth_info: Dict[str, Any]) -> Tuple[bool, str]:
     logger.info(f"User {username} admin status (false) after all checks")
     return False, "default"
 
-def invalidate_user_token(username: str) -> bool:
+async def invalidate_user_token(username: str) -> bool:
     """
-    Invalidate a user's token by updating their token seed.
-    This forces them to get a new token on next login/token refresh.
+    Invalidate a user's token by changing their token seed.
+    This forces the user to get a new token on next login.
     
     Args:
-        username: The username or email of the user
+        username: The username to invalidate the token for
         
     Returns:
         bool: True if successful, False otherwise
     """
     try:
-        from timetagger.server._apiserver import _get_token_seed_from_db
-        from timetagger.server._utils import user2filename
-        import itemdb
+        # Check if user exists in login database
+        from .login_tracker import LoginTracker
+        tracker = LoginTracker()
+        user = tracker.get_login_by_email(username)
         
-        # Open the user's database
-        dbname = user2filename(username)
-        db = itemdb.ItemDB(dbname)
+        if not user:
+            logger.warning(f"Cannot invalidate token: user {username} not found")
+            return False
         
-        # Reset both webtoken and apitoken seeds
-        webtoken_reset = _get_token_seed_from_db(db, "webtoken", True)
-        apitoken_reset = _get_token_seed_from_db(db, "apitoken", True)
+        # Reset the user's token seed in the database
+        from timetagger.server._apiserver import _get_token_seed_from_db, DBSessionContext
         
-        logger.info(f"Successfully invalidated tokens for user {username}")
+        # Create database context for this user
+        db = DBSessionContext(username)
+        
+        # Generate a new token seed (forcing reset=True)
+        await db.__aenter__()
+        await _get_token_seed_from_db(db, "webtoken", True)
+        await _get_token_seed_from_db(db, "apitoken", True)
+        await db.__aexit__(None, None, None)
+        
+        logger.info(f"Invalidated tokens for user {username}")
         return True
+        
     except Exception as e:
-        logger.error(f"Failed to invalidate tokens for user {username}: {e}")
+        logger.error(f"Error invalidating token for user {username}: {e}")
         return False 

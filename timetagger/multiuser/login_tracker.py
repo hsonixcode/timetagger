@@ -7,18 +7,60 @@ unifying login data for both local and Azure users.
 
 import os
 import logging
-import sqlite3
 import json
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime
 
-from timetagger.server._utils import ROOT_USER_DIR
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Index, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.sql import select, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import SQLAlchemyError
+
+from timetagger.server.db_utils import get_database_url, get_engine
 
 logger = logging.getLogger("timetagger.multiuser.login_tracker")
 
-# Path to the central login database
-LOGIN_DB_PATH = os.path.join(ROOT_USER_DIR, "login_users.db")
+# Define the SQLAlchemy model
+Base = declarative_base()
+
+class LoginUser(Base):
+    __tablename__ = 'login_users'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False)
+    username = Column(String(255), nullable=False)
+    role = Column(String(50), default='user')
+    last_login = Column(DateTime)
+    user_type = Column(String(10), default='local')
+    access = Column(String(20), default='allowed')
+    source_db = Column(String(255))
+    user_metadata = Column(JSONB)
+    
+    # Define indices
+    __table_args__ = (
+        Index('idx_email', email),
+        Index('idx_username', username),
+        Index('idx_user_type', user_type),
+        Index('idx_last_login', last_login),
+    )
+    
+    def to_dict(self):
+        """Convert model to dictionary"""
+        return {
+            'id': self.id,
+            'email': self.email,
+            'username': self.username,
+            'role': self.role,
+            'last_login': self.last_login.timestamp() if self.last_login else None,
+            'user_type': self.user_type,
+            'access': self.access,
+            'source_db': self.source_db,
+            'metadata': self.user_metadata
+        }
 
 class LoginTracker:
     """
@@ -29,7 +71,8 @@ class LoginTracker:
         """
         Initialize the LoginTracker.
         """
-        self._db_path = LOGIN_DB_PATH
+        self._engine = get_engine()
+        self._Session = sessionmaker(bind=self._engine)
         self._ensure_db_exists()
     
     def _ensure_db_exists(self):
@@ -37,37 +80,9 @@ class LoginTracker:
         Ensure the central login database exists with the required schema.
         """
         try:
-            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-            
-            # Create the database and table if they don't exist
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.cursor()
-            
-            # Create the login_users table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS login_users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email TEXT UNIQUE NOT NULL,
-                    username TEXT,
-                    role TEXT,
-                    last_login DATETIME,
-                    user_type TEXT CHECK(user_type IN ('local', 'azure')),
-                    access TEXT CHECK(access IN ('allowed', 'not allowed')),
-                    source_db TEXT,
-                    metadata TEXT
-                )
-            ''')
-            
-            # Create indices for faster lookups
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_email ON login_users(email)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_username ON login_users(username)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_type ON login_users(user_type)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_last_login ON login_users(last_login)')
-            
-            conn.commit()
-            conn.close()
-            
-            logger.info(f"Login database initialized at {self._db_path}")
+            # Create tables if they don't exist
+            Base.metadata.create_all(self._engine)
+            logger.info("Login database tables initialized")
         except Exception as e:
             logger.error(f"Error ensuring login database exists: {str(e)}")
     
@@ -103,73 +118,56 @@ class LoginTracker:
             role = user_data.get("role", "user")
             access = "allowed" if user_data.get("is_allowed", True) else "not allowed"
             source_db = user_data.get("source_db", "")
-            metadata = user_data.get("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
+            user_metadata = user_data.get("metadata", {})
+            if not isinstance(user_metadata, dict):
+                user_metadata = {}
             
             # Set last_login to current timestamp
-            last_login = int(time.time())
+            last_login = datetime.utcfromtimestamp(time.time())
             
-            # Connect to the database
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.cursor()
+            # Create a new session
+            session = self._Session()
             
-            # Check if user exists
-            cursor.execute("SELECT email FROM login_users WHERE email = ?", (email,))
-            user_exists = cursor.fetchone() is not None
-            
-            if user_exists:
-                # Update existing user
-                cursor.execute('''
-                    UPDATE login_users
-                    SET username = ?,
-                        role = ?,
-                        last_login = ?,
-                        user_type = ?,
-                        access = ?,
-                        source_db = ?,
-                        metadata = ?
-                    WHERE email = ?
-                ''', (
-                    username,
-                    role,
-                    last_login,
-                    user_type,
-                    access,
-                    source_db,
-                    json.dumps(metadata),
-                    email
-                ))
-                logger.info(f"Updated login record for user {email}")
-            else:
-                # Insert new user
-                cursor.execute('''
-                    INSERT INTO login_users (
-                        email,
-                        username,
-                        role,
-                        last_login,
-                        user_type,
-                        access,
-                        source_db,
-                        metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    email,
-                    username,
-                    role,
-                    last_login,
-                    user_type,
-                    access,
-                    source_db,
-                    json.dumps(metadata)
-                ))
-                logger.info(f"Created new login record for user {email}")
-            
-            conn.commit()
-            conn.close()
-            
-            return True
+            try:
+                # Check if user exists
+                existing_user = session.query(LoginUser).filter_by(email=email).first()
+                
+                if existing_user:
+                    # Update existing user
+                    existing_user.username = username
+                    existing_user.role = role
+                    existing_user.last_login = last_login
+                    existing_user.user_type = user_type
+                    existing_user.access = access
+                    existing_user.source_db = source_db
+                    existing_user.user_metadata = user_metadata
+                    logger.info(f"Updated login record for user {email}")
+                else:
+                    # Insert new user
+                    new_user = LoginUser(
+                        email=email,
+                        username=username,
+                        role=role,
+                        last_login=last_login,
+                        user_type=user_type,
+                        access=access,
+                        source_db=source_db,
+                        user_metadata=user_metadata
+                    )
+                    session.add(new_user)
+                    logger.info(f"Created new login record for user {email}")
+                
+                session.commit()
+                return True
+                
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database error recording login for {email}: {str(e)}")
+                return False
+                
+            finally:
+                session.close()
+                
         except Exception as e:
             logger.error(f"Error recording login for user {user_data.get('email')}: {str(e)}")
             return False
@@ -190,304 +188,194 @@ class LoginTracker:
             List of user dictionaries.
         """
         try:
-            conn = sqlite3.connect(self._db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            # Create a new session
+            session = self._Session()
             
-            # Build the query with potential filters
-            query = "SELECT * FROM login_users"
-            params = []
-            
-            # Add filters as needed
-            filters = []
-            if user_type:
-                filters.append("user_type = ?")
-                params.append(user_type)
-            if role:
-                filters.append("role = ?")
-                params.append(role)
-            if access:
-                filters.append("access = ?")
-                params.append(access)
-            
-            # Add WHERE clause if filters exist
-            if filters:
-                query += " WHERE " + " AND ".join(filters)
-            
-            # Order by last login (most recent first)
-            query += " ORDER BY last_login DESC"
-            
-            # Execute the query
-            cursor.execute(query, params)
-            
-            # Convert rows to dictionaries
-            results = []
-            for row in cursor.fetchall():
-                user_dict = dict(row)
-                # Parse JSON metadata
-                try:
-                    if user_dict.get("metadata"):
-                        user_dict["metadata"] = json.loads(user_dict["metadata"])
-                    else:
-                        user_dict["metadata"] = {}
-                except:
-                    user_dict["metadata"] = {}
+            try:
+                # Build the query with potential filters
+                query = session.query(LoginUser)
                 
-                results.append(user_dict)
-            
-            conn.close()
-            return results
+                if user_type:
+                    query = query.filter(LoginUser.user_type == user_type)
+                
+                if role:
+                    query = query.filter(LoginUser.role == role)
+                
+                if access:
+                    query = query.filter(LoginUser.access == access)
+                
+                # Execute the query and convert results to dictionaries
+                users = [user.to_dict() for user in query.all()]
+                
+                return users
+                
+            finally:
+                session.close()
+                
         except Exception as e:
-            logger.error(f"Error retrieving login data: {str(e)}")
+            logger.error(f"Error retrieving logins: {str(e)}")
             return []
+    
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by email address.
+        
+        Args:
+            email: The email address to look up
+            
+        Returns:
+            User dictionary or None if not found
+        """
+        try:
+            # Create a new session
+            session = self._Session()
+            
+            try:
+                # Query for the user
+                user = session.query(LoginUser).filter_by(email=email).first()
+                
+                if user:
+                    return user.to_dict()
+                return None
+                
+            finally:
+                session.close()
+                
+        except Exception as e:
+            logger.error(f"Error retrieving user by email {email}: {str(e)}")
+            return None
     
     def get_login_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
-        Get login data for a specific user by email.
+        Alias for get_user_by_email for backward compatibility.
         
         Args:
-            email: The email of the user to retrieve.
+            email: The email address to look up
             
         Returns:
-            User dictionary or None if not found.
+            User dictionary or None if not found
         """
-        try:
-            conn = sqlite3.connect(self._db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT * FROM login_users WHERE email = ?", (email,))
-            row = cursor.fetchone()
-            
-            if row:
-                user_dict = dict(row)
-                # Parse JSON metadata
-                try:
-                    if user_dict.get("metadata"):
-                        user_dict["metadata"] = json.loads(user_dict["metadata"])
-                    else:
-                        user_dict["metadata"] = {}
-                except:
-                    user_dict["metadata"] = {}
-                
-                conn.close()
-                return user_dict
-            
-            conn.close()
-            return None
-        except Exception as e:
-            logger.error(f"Error retrieving login data for email {email}: {str(e)}")
-            return None
+        logger.debug(f"Using deprecated method get_login_by_email for {email}, use get_user_by_email instead")
+        return self.get_user_by_email(email)
     
-    def backfill_from_user_databases(self) -> Tuple[int, int]:
+    def update_user_role(self, email: str, new_role: str) -> bool:
         """
-        Backfill the login database from existing user databases.
-        
-        Returns:
-            Tuple of (success_count, error_count).
-        """
-        try:
-            from timetagger.multiuser.user import UserManager
-            
-            user_manager = UserManager()
-            all_users = user_manager.get_all_users_classified()
-            
-            success_count = 0
-            error_count = 0
-            
-            for user in all_users:
-                try:
-                    # Format user data for the login database
-                    email = user.get("email")
-                    if not email:
-                        logger.warning(f"Skipping user {user.get('username')} during backfill: no email")
-                        error_count += 1
-                        continue
-                    
-                    user_data = {
-                        "email": email,
-                        "username": user.get("username"),
-                        "role": user.get("role", "user"),
-                        "user_type": "azure" if user.get("source") == "azure" else "local",
-                        "is_allowed": user.get("is_allowed", True),
-                        "source_db": f"{user.get('username')}.db",
-                        "metadata": {
-                            "display_name": user.get("display_name"),
-                            "auth_type": user.get("auth_type"),
-                            "original_last_active": user.get("last_active")
-                        }
-                    }
-                    
-                    # Record the login (but don't await since this method isn't async)
-                    result = self.record_login_sync(user_data)
-                    
-                    if result:
-                        success_count += 1
-                    else:
-                        error_count += 1
-                
-                except Exception as e:
-                    logger.error(f"Error backfilling user {user.get('username')}: {str(e)}")
-                    error_count += 1
-            
-            return success_count, error_count
-        
-        except Exception as e:
-            logger.error(f"Error during backfill: {str(e)}")
-            return 0, 0
-    
-    async def update_user_role(self, username_or_email: str, new_role: str) -> Tuple[bool, str]:
-        """
-        Update a user's role in the login database.
+        Update a user's role.
         
         Args:
-            username_or_email: The username or email of the user to update
-            new_role: The new role to assign to the user
+            email: The email address of the user to update
+            new_role: The new role to assign
             
         Returns:
-            Tuple of (success: bool, message: str)
+            bool: True if successful, False otherwise
         """
         try:
-            if new_role not in ("admin", "user"):
-                return False, f"Invalid role: {new_role}. Must be 'admin' or 'user'."
+            # Create a new session
+            session = self._Session()
+            
+            try:
+                # Find the user
+                user = session.query(LoginUser).filter_by(email=email).first()
                 
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.cursor()
-            
-            # Try to find the user by email first
-            cursor.execute("SELECT id, email, role FROM login_users WHERE email = ?", (username_or_email,))
-            user = cursor.fetchone()
-            
-            # If not found by email, try by username
-            if not user:
-                cursor.execute("SELECT id, email, role FROM login_users WHERE username = ?", (username_or_email,))
-                user = cursor.fetchone()
-            
-            if not user:
-                conn.close()
-                return False, f"User not found: {username_or_email}"
-            
-            user_id, user_email, current_role = user
-            
-            # No change needed if the role is already set
-            if current_role == new_role:
-                conn.close()
-                return True, f"User {user_email} already has role '{new_role}'"
-            
-            # Update the user's role
-            cursor.execute(
-                "UPDATE login_users SET role = ? WHERE id = ?",
-                (new_role, user_id)
-            )
-            
-            conn.commit()
-            conn.close()
-            
-            logger.info(f"Updated role for user {user_email} from '{current_role}' to '{new_role}'")
-            return True, f"Successfully updated user {user_email} from '{current_role}' to '{new_role}'"
-            
+                if not user:
+                    logger.warning(f"Cannot update role: user with email {email} not found")
+                    return False
+                
+                # Update the role
+                user.role = new_role
+                session.commit()
+                
+                logger.info(f"Updated role for user {email} to {new_role}")
+                return True
+                
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database error updating role for {email}: {str(e)}")
+                return False
+                
+            finally:
+                session.close()
+                
         except Exception as e:
-            logger.error(f"Error updating role for user {username_or_email}: {str(e)}")
-            return False, f"Error updating role: {str(e)}"
+            logger.error(f"Error updating role for user {email}: {str(e)}")
+            return False
     
-    def record_login_sync(self, user_data: Dict[str, Any]) -> bool:
+    def update_user_access(self, email: str, allowed: bool) -> bool:
         """
-        Synchronous version of record_login for use in backfill.
+        Update a user's access status.
+        
+        Args:
+            email: The email address of the user to update
+            allowed: Whether the user is allowed access
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
         try:
-            # Ensure required fields
-            email = user_data.get("email")
-            if not email:
-                logger.warning("Cannot record login: email is required")
-                return False
+            # Create a new session
+            session = self._Session()
             
-            username = user_data.get("username")
-            if not username:
-                logger.warning("Cannot record login: username is required")
-                return False
-            
-            user_type = user_data.get("user_type", "local")
-            if user_type not in ("local", "azure"):
-                user_type = "local"  # Default to local if invalid
-            
-            # Optional fields with defaults
-            role = user_data.get("role", "user")
-            access = "allowed" if user_data.get("is_allowed", True) else "not allowed"
-            source_db = user_data.get("source_db", "")
-            metadata = user_data.get("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
-            
-            # Set last_login to current timestamp or use existing one if available
-            last_login = user_data.get("last_login", int(time.time()))
-            if metadata and metadata.get("original_last_active"):
-                last_login = metadata["original_last_active"]
-            
-            # Connect to the database
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.cursor()
-            
-            # Check if user exists
-            cursor.execute("SELECT email FROM login_users WHERE email = ?", (email,))
-            user_exists = cursor.fetchone() is not None
-            
-            if user_exists:
-                # Only update if existing last_login is older than the new one
-                cursor.execute("SELECT last_login FROM login_users WHERE email = ?", (email,))
-                existing_last_login = cursor.fetchone()[0]
+            try:
+                # Find the user
+                user = session.query(LoginUser).filter_by(email=email).first()
                 
-                if not existing_last_login or existing_last_login < last_login:
-                    # Update existing user
-                    cursor.execute('''
-                        UPDATE login_users
-                        SET username = ?,
-                            role = ?,
-                            last_login = ?,
-                            user_type = ?,
-                            access = ?,
-                            source_db = ?,
-                            metadata = ?
-                        WHERE email = ?
-                    ''', (
-                        username,
-                        role,
-                        last_login,
-                        user_type,
-                        access,
-                        source_db,
-                        json.dumps(metadata),
-                        email
-                    ))
-                    logger.info(f"Updated login record for user {email}")
-            else:
-                # Insert new user
-                cursor.execute('''
-                    INSERT INTO login_users (
-                        email,
-                        username,
-                        role,
-                        last_login,
-                        user_type,
-                        access,
-                        source_db,
-                        metadata
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    email,
-                    username,
-                    role,
-                    last_login,
-                    user_type,
-                    access,
-                    source_db,
-                    json.dumps(metadata)
-                ))
-                logger.info(f"Created new login record for user {email}")
-            
-            conn.commit()
-            conn.close()
-            
-            return True
+                if not user:
+                    logger.warning(f"Cannot update access: user with email {email} not found")
+                    return False
+                
+                # Update the access
+                user.access = "allowed" if allowed else "not allowed"
+                session.commit()
+                
+                logger.info(f"Updated access for user {email} to {user.access}")
+                return True
+                
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database error updating access for {email}: {str(e)}")
+                return False
+                
+            finally:
+                session.close()
+                
         except Exception as e:
-            logger.error(f"Error recording login for user {user_data.get('email')}: {str(e)}")
-            return False 
+            logger.error(f"Error updating access for user {email}: {str(e)}")
+            return False
+    
+    def get_login_stats(self) -> Dict[str, Any]:
+        """
+        Get login statistics.
+        
+        Returns:
+            Dictionary with statistics
+        """
+        try:
+            # Create a new session
+            session = self._Session()
+            
+            try:
+                stats = {
+                    "total_users": session.query(func.count(LoginUser.id)).scalar(),
+                    "local_users": session.query(func.count(LoginUser.id)).filter_by(user_type="local").scalar(),
+                    "azure_users": session.query(func.count(LoginUser.id)).filter_by(user_type="azure").scalar(),
+                    "admin_users": session.query(func.count(LoginUser.id)).filter_by(role="admin").scalar(),
+                    "users_with_access": session.query(func.count(LoginUser.id)).filter_by(access="allowed").scalar(),
+                    "users_without_access": session.query(func.count(LoginUser.id)).filter_by(access="not allowed").scalar(),
+                }
+                
+                return stats
+                
+            finally:
+                session.close()
+                
+        except Exception as e:
+            logger.error(f"Error getting login stats: {str(e)}")
+            return {
+                "total_users": 0,
+                "local_users": 0,
+                "azure_users": 0,
+                "admin_users": 0,
+                "users_with_access": 0,
+                "users_without_access": 0,
+                "error": str(e)
+            } 

@@ -21,6 +21,7 @@ async function refresh_auth_status() {
     await tools.sleepms(200);
 
     let auth = tools.get_auth_info();
+    console.log("Auth info:", auth);
 
     if (auth) {
         let html = "Logged in as <b>" + auth.username + "</b>";
@@ -46,6 +47,7 @@ async function refresh_auth_status() {
                 
                 const decodedPayload = atob(base64Payload);
                 const azurePayload = JSON.parse(decodedPayload);
+                console.log("Azure token payload:", azurePayload);
                 
                 // Display Azure token information
                 if (azurePayload.exp) {
@@ -86,28 +88,31 @@ async function refresh_auth_status() {
             
             const decodedPayload = atob(base64Payload);
             const tokenPayload = JSON.parse(decodedPayload);
+            console.log("TimeTagger token payload:", tokenPayload);
             
             html += "<br><span class='token-status'>TimeTagger Token Status:</span>";
-            if (tokenPayload.exp) {
-                const expiresDate = new Date(tokenPayload.exp * 1000);
-                html += "<br>✓ Valid until: " + expiresDate.toLocaleString();
-            }
-            if (tokenPayload.iat) {
-                const issuedDate = new Date(tokenPayload.iat * 1000);
-                html += "<br>✓ Issued at: " + issuedDate.toLocaleString();
-            }
-            if (tokenPayload.is_admin !== undefined) {
-                html += "<br>✓ Admin status: " + (tokenPayload.is_admin ? "Yes" : "No");
-            }
-            html += "<br>✓ Username: " + tokenPayload.username;
-            if (tokenPayload.seed) {
-                html += "<br>✓ Seed: " + tokenPayload.seed;
+            
+            // Display all token fields
+            for (const [key, value] of Object.entries(tokenPayload)) {
+                if (key === 'expires') {
+                    const expiresDate = new Date(value * 1000);
+                    html += "<br>✓ Valid until: " + expiresDate.toLocaleString();
+                } else if (key === 'is_admin') {
+                    html += "<br>✓ Admin status: " + (value ? "Yes" : "No");
+                } else {
+                    html += "<br>✓ " + key + ": " + value;
+                }
             }
         } catch (error) {
             console.error('Error parsing token:', error);
             html += "<br><span class='token-status'>TimeTagger Token Status:</span>";
             html += "<br>✓ Valid (token details unavailable)";
             html += "<br>✗ Error: " + error.message;
+            
+            // Raw token for debugging
+            if (auth.token) {
+                html += "<br>Raw token: " + auth.token.substring(0, 20) + "...";
+            }
         }
         
         el.innerHTML = html;
@@ -130,14 +135,75 @@ async function refresh_api_token(reset) {
         let url = tools.build_api_url("apitoken");
         if (reset) { url += "?reset=1"; }
         let init = {method: "GET", headers:{authtoken: auth.token}};
-        let res = await fetch(url, init);
-        if (res.status != 200) {
-            el.innerText = "Fail: " + await res.text();
-            return;
+        try {
+            let res = await fetch(url, init);
+            if (res.status != 200) {
+                el.innerText = "Fail: " + await res.text();
+                console.error("API token fetch failed:", await res.text());
+                return;
+            }
+            
+            let responseText = await res.text();
+            console.log("API token response:", responseText);
+            
+            // Handle token - API returns plain token string, not JSON
+            let tokenValue = responseText.trim();
+            
+            // Check if somehow it's a JSON response (for backward compatibility)
+            if (tokenValue.startsWith('{') && tokenValue.endsWith('}')) {
+                try {
+                    let d = JSON.parse(tokenValue);
+                    tokenValue = d.token || tokenValue;
+                } catch (jsonError) {
+                    console.warn("Response looks like JSON but couldn't be parsed:", jsonError);
+                    // Continue with the raw token
+                }
+            }
+            
+            // Detailed token display
+            let htmlContent = "<span class='token-status'>API Token Status:</span><br>✓ Active<br>";
+            
+            // Try to decode and display token details
+            try {
+                const tokenParts = tokenValue.split('.');
+                if (tokenParts.length === 3) {
+                    let base64Payload = tokenParts[1];
+                    base64Payload = base64Payload.replace(/-/g, '+').replace(/_/g, '/');
+                    while (base64Payload.length % 4) {
+                        base64Payload += '=';
+                    }
+                    
+                    const decodedPayload = atob(base64Payload);
+                    const tokenPayload = JSON.parse(decodedPayload);
+                    console.log("API token payload:", tokenPayload);
+                    
+                    // Show token details
+                    for (const [key, value] of Object.entries(tokenPayload)) {
+                        if (key === 'expires') {
+                            const expiresDate = new Date(value * 1000);
+                            htmlContent += "✓ Valid until: " + expiresDate.toLocaleString() + "<br>";
+                        } else if (key === 'is_admin') {
+                            htmlContent += "✓ Admin privileges: " + (value ? "Yes" : "No") + "<br>";
+                        } else {
+                            htmlContent += "✓ " + key + ": " + value + "<br>";
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Error decoding API token:", error);
+                htmlContent += "✓ Token valid (details unavailable)<br>";
+            }
+            
+            // Always show the token string
+            htmlContent += "Token: " + tokenValue;
+            el.innerHTML = htmlContent;
+            resetapikeybutton.disabled = false;
+            
+        } catch (error) {
+            console.error("API token fetch error:", error);
+            el.innerHTML = "<span class='token-status'>API Token Status:</span><br>✗ Error fetching token: " + error.message;
+            resetapikeybutton.disabled = true;
         }
-        d = JSON.parse(await res.text());
-        el.innerHTML = "<span class='token-status'>API Token Status:</span><br>✓ Active<br>Token: " + d.token;
-        resetapikeybutton.disabled = false;
     } else {
         el.innerHTML = "<span class='token-status'>API Token Status:</span><br>✗ Not available (not logged in)";
         resetapikeybutton.disabled = true;

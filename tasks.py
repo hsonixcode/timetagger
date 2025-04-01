@@ -5,8 +5,16 @@ import sys
 import shutil
 import importlib
 import subprocess
+import logging
 
 from invoke import task
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("timetagger.tasks")
 
 # ---------- Per project config ----------
 
@@ -58,7 +66,7 @@ def lint(ctx):
     ]
     ret_code = subprocess.call(cmd, cwd=ROOT_DIR)
     if ret_code == 0:
-        print("No style errors found")
+        logger.info("No style errors found")
     else:
         sys.exit(ret_code)
 
@@ -101,11 +109,11 @@ def clean(ctx):
                 ".mypy_cache",
             ):
                 shutil.rmtree(os.path.join(root, dname))
-                print("Removing", dname)
+                logger.info(f"Removing {dname}")
         for fname in files:
             if fname.endswith((".pyc", ".pyo")) or fname in (".coverage"):
                 os.remove(os.path.join(root, fname))
-                print("Removing", fname)
+                logger.info(f"Removing {fname}")
     # Delete specific files and directories
     for fname in [
         "docs/site",
@@ -118,10 +126,10 @@ def clean(ctx):
         filename = os.path.join(ROOT_DIR, fname)
         if os.path.isfile(filename):
             os.remove(filename)
-            print("Removing", filename)
+            logger.info(f"Removing {filename}")
         elif os.path.isdir(filename):
             shutil.rmtree(filename)
-            print("Removing", filename)
+            logger.info(f"Removing {filename}")
 
 
 @task
@@ -140,8 +148,9 @@ def bumpversion(ctx, version):
     )
     lines = [line for line in lines if not line.startswith("?? ")]
     if lines:
-        print("Cannot bump version because there are outstanding changes:")
-        print("\n".join(lines))
+        logger.warning("Cannot bump version because there are outstanding changes:")
+        for line in lines:
+            logger.warning(line)
         return
     # Get the version definition
     filename = os.path.join(ROOT_DIR, LIBNAME, "__init__.py")
@@ -154,7 +163,7 @@ def bumpversion(ctx, version):
         raise ValueError("Could not find version definition")
     # Only show the version?
     if not version.strip("x-"):
-        print(lines[line_index])
+        logger.info(lines[line_index])
         return
     # Apply change
     lines[line_index] = lines[line_index].split("=")[0] + f'= "{version}"'
@@ -167,15 +176,15 @@ def bumpversion(ctx, version):
         if x.lower() == "y":
             break
         elif x.lower() == "n":
-            print("Cancelling (git checkout)")
+            logger.info("Cancelling (git checkout)")
             subprocess.run(["git", "checkout", filename])
             return
     # Git
-    print("Git commit and tag")
+    logger.info("Git commit and tag")
     subprocess.run(["git", "add", filename])
     subprocess.run(["git", "commit", "-m", f"Bump version to {version}"])
     subprocess.run(["git", "tag", f"v{version}"])
-    print(f"git push origin main v{version}")
+    logger.info(f"git push origin main v{version}")
     subprocess.run(["git", "push", "origin", "main", f"v{version}"])
     # Pypi
     input("\nHit enter to upload to pypi: ")
@@ -185,5 +194,5 @@ def bumpversion(ctx, version):
     subprocess.run([sys.executable, "setup.py", "sdist", "bdist_wheel"])
     subprocess.run([sys.executable, "-m", "twine", "upload", dist_dir + "/*"])
     # Bye bye
-    print("Success!")
-    print("Don't forget to write release notes!")
+    logger.info("Success!")
+    logger.info("Don't forget to write release notes!")

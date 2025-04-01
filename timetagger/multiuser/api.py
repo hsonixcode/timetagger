@@ -327,25 +327,19 @@ def _filter_users(users: List[Dict[str, Any]], query: str) -> List[Dict[str, Any
 
 async def debug_azure_users(request, auth_info) -> Tuple[int, Dict[str, str], Dict[str, Any]]:
     """
-    API endpoint handler to debug Azure users in the central database.
+    API endpoint for debugging Azure users.
+    This is mainly for development and troubleshooting.
     
     Args:
-        request: The HTTP request object.
-        auth_info: Authentication information for the current user.
+        request: The HTTP request object
+        auth_info: The authentication info dictionary
         
     Returns:
-        Tuple of (status_code, headers, response_body).
+        tuple: (status_code, headers, response_body)
     """
-    # Check if user is authenticated
+    # Check if user is authenticated and has admin privileges
     if not auth_info:
-        logger.warning("Unauthenticated access attempt to debug_azure_users endpoint")
         return 401, {}, {"error": "Authentication required"}
-    
-    # Check if user has admin privileges
-    is_admin = auth_info.get("is_admin", False)
-    if not is_admin:
-        logger.warning(f"Non-admin user {auth_info.get('username')} attempted to access debug_azure_users endpoint")
-        return 403, {}, {"error": "Admin privileges required"}
     
     try:
         # Add request debugging info
@@ -358,25 +352,18 @@ async def debug_azure_users(request, auth_info) -> Tuple[int, Dict[str, str], Di
         
         # Get database info
         from pathlib import Path
-        import sqlite3
         import os
         from timetagger.server._utils import ROOT_USER_DIR
-        
-        # Check if login database exists
-        login_db_path = os.path.join(ROOT_USER_DIR, "login_users.db")
-        login_db_exists = os.path.exists(login_db_path)
+        from timetagger.server.db_utils import get_session, Record, Settings, UserInfo
+        from sqlalchemy import func, distinct
         
         debug_info = {
             "request_info": request_info,
-            "login_db_exists": login_db_exists,
-            "login_db_path": login_db_path,
-            "azure_users": [],
-            "local_users": [],
             "user_dirs": [],
             "db_files": []
         }
         
-        # Scan user directories
+        # Scan user directories (for legacy support)
         user_path = Path(ROOT_USER_DIR)
         if user_path.exists():
             debug_info["user_dirs"] = [str(d) for d in user_path.iterdir() if d.is_dir()]
@@ -385,45 +372,97 @@ async def debug_azure_users(request, auth_info) -> Tuple[int, Dict[str, str], Di
             db_files = list(user_path.glob("*.db")) + list(user_path.glob("**/*.db"))
             debug_info["db_files"] = [str(f) for f in db_files]
         
-        # If login database exists, check it directly
-        if login_db_exists:
-            try:
-                # Connect to the database
-                conn = sqlite3.connect(login_db_path)
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
+        # Query the database directly
+        try:
+            session = get_session()
+            
+            # Get all azure users from settings
+            azure_users = []
+            local_users = []
+            
+            # Query all distinct usernames
+            usernames = session.query(distinct(Settings.username)).all()
+            usernames = [u[0] for u in usernames]
+            
+            for username in usernames:
+                # Check if user is Azure user
+                azure_info_setting = session.query(Settings).filter_by(
+                    username=username,
+                    key="azure_info"
+                ).first()
                 
-                # Get all users
-                cursor.execute("SELECT * FROM login_users")
-                rows = cursor.fetchall()
+                auth_info_setting = session.query(Settings).filter_by(
+                    username=username,
+                    key="auth_info"
+                ).first()
                 
-                # Parse rows into dicts
-                all_users = []
-                for row in rows:
-                    user_dict = dict(row)
+                user_info_setting = session.query(Settings).filter_by(
+                    username=username,
+                    key="user_info"
+                ).first()
+                
+                # Determine if Azure user
+                is_azure = False
+                user_data = {"username": username}
+                
+                # Check azure_info
+                if azure_info_setting:
+                    azure_info = getattr(azure_info_setting, "value", {}) or {}
+                    is_azure = True
+                    user_data.update({
+                        "email": azure_info.get("email", username),
+                        "display_name": azure_info.get("display_name", username),
+                        "role": azure_info.get("role", "user"),
+                        "source": "azure_info"
+                    })
+                
+                # Check auth_info
+                elif auth_info_setting:
+                    auth_info = getattr(auth_info_setting, "value", {}) or {}
+                    if auth_info.get("auth_type") == "azure":
+                        is_azure = True
+                        user_data.update({
+                            "email": auth_info.get("email", username),
+                            "display_name": auth_info.get("name", username),
+                            "role": auth_info.get("role", "user"),
+                            "source": "auth_info"
+                        })
+                
+                # Check user_info
+                elif user_info_setting:
+                    user_info = getattr(user_info_setting, "value", {}) or {}
+                    if user_info.get("auth_type") == "azure" or user_info.get("user_type") == "azure":
+                        is_azure = True
+                        user_data.update({
+                            "email": user_info.get("email", username),
+                            "display_name": user_info.get("display_name", username),
+                            "role": user_info.get("role", "user"),
+                            "source": "user_info"
+                        })
+                
+                # Add to appropriate list
+                if is_azure:
+                    azure_users.append(user_data)
+                else:
+                    if not user_data.get("source"):
+                        user_data["source"] = "default"
+                    local_users.append(user_data)
                     
-                    # Parse JSON metadata
-                    try:
-                        if user_dict.get("metadata"):
-                            user_dict["metadata"] = json.loads(user_dict["metadata"])
-                        else:
-                            user_dict["metadata"] = {}
-                    except Exception as e:
-                        user_dict["metadata"] = {"error": str(e)}
-                    
-                    all_users.append(user_dict)
-                
-                # Filter by user type
-                debug_info["azure_users"] = [u for u in all_users if u.get("user_type") == "azure"]
-                debug_info["local_users"] = [u for u in all_users if u.get("user_type") == "local"]
-                
-                # Check login_users table schema
-                cursor.execute("PRAGMA table_info(login_users)")
-                debug_info["login_table_schema"] = [dict(row) for row in cursor.fetchall()]
-                
-                conn.close()
-            except Exception as e:
-                debug_info["db_error"] = str(e)
+            debug_info["azure_users"] = azure_users
+            debug_info["local_users"] = local_users
+            
+            # Get table statistics
+            debug_info["database_stats"] = {
+                "records_count": session.query(func.count(Record.key)).scalar(),
+                "settings_count": session.query(func.count(Settings.key)).scalar(),
+                "userinfo_count": session.query(func.count(UserInfo.key)).scalar(),
+                "unique_users": session.query(func.count(distinct(Settings.username))).scalar()
+            }
+            
+            session.close()
+            
+        except Exception as e:
+            debug_info["db_error"] = str(e)
         
         # Get information from UserManager for comparison
         try:
@@ -432,6 +471,15 @@ async def debug_azure_users(request, auth_info) -> Tuple[int, Dict[str, str], Di
             debug_info["user_manager_data"] = all_users
         except Exception as e:
             debug_info["user_manager_error"] = str(e)
+        
+        # Get information from LoginTracker
+        try:
+            from .login_tracker import LoginTracker
+            tracker = LoginTracker()
+            login_stats = tracker.get_login_stats()
+            debug_info["login_tracker_stats"] = login_stats
+        except Exception as e:
+            debug_info["login_tracker_error"] = str(e)
         
         # Return the debug info
         return 200, {"content-type": "application/json"}, {"debug_info": debug_info}

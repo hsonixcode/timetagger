@@ -7,13 +7,36 @@ import time
 import logging
 import secrets
 
-import itemdb
+from sqlalchemy.orm import Session
 
-from ._utils import user2filename, create_jwt, decode_jwt
-
+from ._utils import create_jwt, decode_jwt
+from .db_utils import get_session, Record, Settings, UserInfo, UserInfoKeyValue
 
 logger = logging.getLogger("asgineer")
 
+# Define requirements and specs for records and settings
+REQS = {
+    "records": ["key", "t1", "tags"],
+    "settings": ["key", "value"],
+}
+
+SPECS = {
+    "records": {
+        "key": str,
+        "t1": float,
+        "t2": float,
+        "mt": float,
+        "st": float,
+        "ds": str,
+        "tags": str,
+    },
+    "settings": {
+        "key": str,
+        "value": lambda x: x,
+        "mt": float,
+        "st": float,
+    },
+}
 
 # At the server:
 #
@@ -57,17 +80,11 @@ JSON_MAX = 8192
 
 # ----- END COMMON PART (don't change this comment)
 
-SPECS = {"records": RECORD_SPEC, "settings": SETTING_SPEC}
-REQS = {
-    "records": frozenset(RECORD_REQ),
-    "settings": frozenset(SETTING_REQ),
-}
-
-# Database indices
-INDICES = {
-    "records": ("!key", "st", "t1", "t2"),
-    "settings": ("!key", "st"),
-    "userinfo": ("!key", "st"),
+# Map model classes to table names
+MODEL_MAP = {
+    "records": Record,
+    "settings": Settings,
+    "userinfo": UserInfo,
 }
 
 
@@ -78,6 +95,175 @@ class AuthException(Exception):
 
     def __init__(self, msg):
         super().__init__(msg)
+
+
+# Context manager for session management
+class DBSessionContext:
+    """Context manager for database sessions"""
+    
+    def __init__(self, username):
+        self.username = username
+        self.session = None
+    
+    async def __aenter__(self):
+        self.session = get_session()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.session.rollback()
+        else:
+            self.session.commit()
+        self.session.close()
+    
+    async def select_one(self, table_name, condition, *args):
+        """Select a single record from the database based on a condition"""
+        model_class = MODEL_MAP[table_name]
+        
+        query = self.session.query(model_class)
+        
+        # Parse the condition to create a SQLAlchemy filter
+        if condition.startswith("key =="):
+            key = args[0] if args else condition.split("==")[1].strip().strip('"\'')
+            query = query.filter(model_class.key == key)
+        
+        # Add username filter
+        query = query.filter(model_class.username == self.username)
+        
+        # Execute the query and get the first result
+        result = query.first()
+        
+        # Convert to dictionary if result exists
+        if result:
+            return {c.name: getattr(result, c.name) for c in result.__table__.columns}
+        return None
+    
+    async def select_all(self, table_name, condition=None, *args):
+        """Select all records from the database based on optional condition"""
+        model_class = MODEL_MAP[table_name]
+        
+        query = self.session.query(model_class)
+        
+        # Parse the condition to create a SQLAlchemy filter if provided
+        if condition:
+            try:
+                if ">" in condition:
+                    field, value = condition.split(">")
+                    field = field.strip()
+                    # Handle the case where args[0] might be a question mark
+                    if args and args[0] != '?':
+                        try:
+                            value = float(args[0])
+                        except (TypeError, ValueError):
+                            # If we can't convert args[0], use the value from condition string
+                            value = float(value.strip())
+                    else:
+                        value = float(value.strip())
+                    query = query.filter(getattr(model_class, field) > value)
+                elif "<" in condition:
+                    field, value = condition.split("<")
+                    field = field.strip()
+                    # Handle the case where args[0] might be a question mark
+                    if args and args[0] != '?':
+                        try:
+                            value = float(args[0])
+                        except (TypeError, ValueError):
+                            # If we can't convert args[0], use the value from condition string
+                            value = float(value.strip())
+                    else:
+                        value = float(value.strip())
+                    query = query.filter(getattr(model_class, field) < value)
+            except Exception as e:
+                logger.error(f"Error parsing condition '{condition}' with args {args}: {e}")
+                # Continue without applying the filter
+        
+        # Add username filter
+        query = query.filter(model_class.username == self.username)
+        
+        # Execute the query and get all results
+        results = query.all()
+        
+        # Convert to dictionaries
+        return [{c.name: getattr(result, c.name) for c in result.__table__.columns} for result in results]
+    
+    async def put(self, table_name, item):
+        """Insert or update an item in the database"""
+        model_class = MODEL_MAP[table_name]
+        
+        # Add username to the item
+        item['username'] = self.username
+        
+        # Add server time
+        item['st'] = time.time()
+        
+        # Check if item exists
+        existing = self.session.query(model_class).filter(
+            model_class.key == item['key'],
+            model_class.username == self.username
+        ).first()
+        
+        if existing:
+            # Update existing item
+            for key, value in item.items():
+                setattr(existing, key, value)
+        else:
+            # Create new item
+            new_item = model_class(**item)
+            self.session.add(new_item)
+    
+    async def delete(self, table_name, condition):
+        """Delete records matching a condition"""
+        model_class = MODEL_MAP[table_name]
+        
+        query = self.session.query(model_class)
+        
+        # Parse the condition
+        if condition == "t1 = t2":
+            query = query.filter(model_class.t1 == model_class.t2)
+        
+        # Add username filter
+        query = query.filter(model_class.username == self.username)
+        
+        # Delete the records
+        query.delete(synchronize_session=False)
+    
+    async def ensure_table(self, table_name):
+        """Ensure the table exists - no-op in PostgreSQL as tables are created at startup"""
+        # Tables are created at DB initialization, nothing needed here
+        pass
+    
+    async def delete_table(self, table_name):
+        """Delete all records in a table for this user"""
+        model_class = MODEL_MAP[table_name]
+        
+        # Delete all records for this user
+        self.session.query(model_class).filter(
+            model_class.username == self.username
+        ).delete(synchronize_session=False)
+    
+    async def rename_table(self, old_name, new_name):
+        """Move all records from one table to another"""
+        # Get the model classes
+        old_model = MODEL_MAP[old_name]
+        new_model = MODEL_MAP[new_name]
+        
+        # Query all records from old table for this user
+        old_records = self.session.query(old_model).filter(
+            old_model.username == self.username
+        ).all()
+        
+        # Convert to dictionaries
+        items = [{c.name: getattr(record, c.name) for c in record.__table__.columns} for record in old_records]
+        
+        # Delete from old table
+        self.session.query(old_model).filter(
+            old_model.username == self.username
+        ).delete(synchronize_session=False)
+        
+        # Insert into new table
+        for item in items:
+            new_record = new_model(**item)
+            self.session.add(new_record)
 
 
 # %% Main handler
@@ -153,14 +339,6 @@ async def authenticate(request):
     does not match the seed (i.e. has been revoked), or has expired.
     """
 
-    # Notes:
-    # * We raise an exception on auth fail, so that if the calling code
-    #   would forget to handle the non-authenticated case, the request
-    #   would still fail (albeit with a 500).
-    # * The validation is done in order of importance. The seed is checked
-    #   before the expiration. Clients can scan the 401 message for the word
-    #   "revoked" and handle revokation different from expiration.
-
     st = time.time()
 
     # Get jwt from header. Validates that a token is provided.
@@ -174,12 +352,18 @@ async def authenticate(request):
     except Exception as err:
         raise AuthException(str(err))
 
-    # Open the database, this creates it if it does not yet exist
-    dbname = user2filename(auth_info["username"])
-    db = await itemdb.AsyncItemDB(dbname)
-    await db.ensure_table("userinfo", *INDICES["userinfo"])
-    await db.ensure_table("records", *INDICES["records"])
-    await db.ensure_table("settings", *INDICES["settings"])
+    # Create database session context
+    db = DBSessionContext(auth_info["username"])
+    
+    # Ensure tables exist (no-op in PostgreSQL, but kept for compatibility)
+    await db.__aenter__()
+    await db.ensure_table("userinfo")
+    await db.ensure_table("records")
+    await db.ensure_table("settings")
+    await db.__aexit__(None, None, None)
+    
+    # Create a fresh session context
+    db = DBSessionContext(auth_info["username"])
 
     # Get reference seed from db
     expires = auth_info["expires"]
@@ -201,203 +385,234 @@ async def authenticate(request):
 
 async def get_webtoken(request, auth_info, db):
     # Get reset option
-    reset = request.querydict.get("reset", "")
-    reset = reset.lower() not in ("", "false", "no", "0")
-    # Auth
-    if auth_info["expires"] > time.time() + WEBTOKEN_LIFETIME:
-        return 403, {}, "forbidden: /webtoken needs auth with a web-token"
-
-    return await _get_any_token(auth_info, db, "webtoken", reset)
+    reset = False
+    if request.querydict and "reset" in request.querydict:
+        reset = True
+    
+    # Return token
+    webtoken, db_seed = await _get_any_token(auth_info, db, "webtoken", reset)
+    return 200, {}, webtoken
 
 
 async def get_apitoken(request, auth_info, db):
     # Get reset option
-    reset = request.querydict.get("reset", "")
-    reset = reset.lower() not in ("", "false", "no", "0")
-    # Auth
-    if auth_info["expires"] > time.time() + WEBTOKEN_LIFETIME:
-        return 403, {}, "forbidden: /apitoken needs auth with a web-token"
-
-    return await _get_any_token(auth_info, db, "apitoken", reset)
+    reset = False
+    if request.querydict and "reset" in request.querydict:
+        reset = True
+    
+    # Return token
+    apitoken, db_seed = await _get_any_token(auth_info, db, "apitoken", reset)
+    return 200, {}, apitoken
 
 
 async def _get_any_token(auth_info, db, tokenkind, reset):
-    assert tokenkind in ("webtoken", "apitoken")
-    # Get expiration time
-    if tokenkind == "apitoken":
-        expires = API_TOKEN_EXP
-    else:
-        expires = int(time.time()) + WEBTOKEN_LIFETIME
-    # Create token
-    seed = await _get_token_seed_from_db(db, tokenkind, reset)
+    username = auth_info["username"]
     
-    # Use standardized admin check
-    try:
-        from timetagger.multiuser.auth_utils import check_admin_status
-        is_admin, source = await check_admin_status(auth_info)
-        logger.info(f"Admin status for {auth_info['username']} determined as {is_admin} (source: {source})")
-    except Exception as e:
-        logger.error(f"Error in admin status check: {e}")
-        # Fallback to legacy check if the standardized check fails
-        from .. import config
-        credentials = config.credentials.replace(";", ",").split(",")
-        is_admin = bool(credentials and credentials[0].startswith(auth_info["username"] + ":"))
-        logger.info(f"Fallback admin check based on credentials: {is_admin}")
+    # Check admin status
+    from ..multiuser.auth_utils import check_admin_status_sync
+    is_admin, source = check_admin_status_sync(auth_info)
+    logger.info(f"Admin status for {username} determined as {is_admin} from {source}")
     
-    payload = dict(
-        username=auth_info["username"],
-        expires=expires,
-        seed=seed,
-        is_admin=is_admin,
-    )
-    token = create_jwt(payload)
-
-    result = dict(token=token)
-    return 200, {}, result
+    # Make sure we're connected to db
+    async with db:
+        # Get new seed and create new token
+        db_seed = await _get_token_seed_from_db(db, tokenkind, reset)
+        
+        # Create token
+        st = time.time()
+        if tokenkind == "webtoken":
+            exptime = st + WEBTOKEN_LIFETIME
+        else:
+            exptime = API_TOKEN_EXP  # the year 3000
+        
+        payload = {
+            "username": username,
+            "expires": int(exptime),
+            "seed": db_seed,
+            "is_admin": is_admin  # Include admin status in the token
+        }
+        token = create_jwt(payload)
+        logger.info(f"Generated {tokenkind} for {username} with is_admin={is_admin}")
+        
+        # Done!
+        return token, db_seed
 
 
 async def _get_token_seed_from_db(db, tokenkind, reset):
-    # Get seed
-    query = f"key = '{tokenkind}_seed'"
-    ob = await db.select_one("userinfo", query) or {}
-    seed = ob.get("value", "")
-    # Create new seed if needed
-    if reset or not seed:
-        seed = secrets.token_urlsafe(8)  # new random seed
-        st = time.time()
-        async with db:
-            await db.put_one(
-                "userinfo", key=f"{tokenkind}_seed", st=st, mt=st, value=seed
-            )
-    return seed
+    # Get seed using UserInfoKeyValue
+    username = db.username
+    key = tokenkind + "_seed"
+    
+    # Import here to avoid circular imports
+    from .db_utils import UserInfoKeyValue
+    
+    if reset:
+        # Generate new seed and save it
+        new_seed = secrets.token_urlsafe(9)
+        user_info = UserInfoKeyValue(
+            username=username,
+            key=key,
+            value=new_seed,
+            mt=time.time(),
+            st=time.time()
+        )
+        UserInfoKeyValue.save(user_info)
+        return new_seed
+    else:
+        # Try to get existing seed
+        user_info = UserInfoKeyValue.get_by_username_and_key(username, key)
+        if user_info is not None:
+            return user_info.value
+        else:
+            # No seed exists, create a new one
+            return await _get_token_seed_from_db(db, tokenkind, True)
 
 
 async def get_webtoken_unsafe(username, reset=False, is_admin=None):
-    """This function provides a webtoken that can be used to
-    authenticate future requests. It is intended to bootstrap the
-    authentication; the caller of this function is responsible for the
-    request being authenticated in another way, for example:
-
-    * Checking that the request is from localhost (for local use only).
-    * Obtaining and validating a JWT from a trusted auth provider (e.g. Auth0).
-    * Going through an OAuth workflow with a trusted provider (e.g Google or Github).
-    * Implement an authenticate-via-email workflow.
-    * Implement username/password authentication.
-
-    The provided webtoken expires in two weeks. It is recommended to
-    use GET /api/v2/webtoken to get a fresh token once a day.
+    """Generate a webtoken for the given user. The seed for the token is
+    retrieved from the user's db. If no seed exists yet, it is generated.
+    
+    This function is unsafe in that it does not check credentials. The
+    caller of this function MUST take care of that.
     """
-    # Open db
-    dbname = user2filename(username)
-    db = await itemdb.AsyncItemDB(dbname)
-    await db.ensure_table("userinfo", *INDICES["userinfo"])
-    # Produce payload
-    seed = await _get_token_seed_from_db(db, "webtoken", reset)
+    # Check in auth_utils if is_admin is available
+    from ..multiuser.auth_utils import check_admin_status_sync
     
-    # Check if is_admin was explicitly provided 
-    if is_admin is None:
-        # Use standardized admin check with mock auth_info
-        try:
-            from timetagger.multiuser.auth_utils import check_admin_status
-            mock_auth_info = {"username": username}
-            is_admin, source = await check_admin_status(mock_auth_info)
-            logger.info(f"Admin status for {username} determined as {is_admin} (source: {source})")
-        except Exception as e:
-            logger.error(f"Error in admin status check: {e}")
-            # Fallback to legacy check if the standardized check fails
-            from .. import config
-            credentials = config.credentials.replace(";", ",").split(",")
-            is_admin = bool(credentials and credentials[0].startswith(username + ":"))
-            logger.info(f"Fallback admin check based on credentials: {is_admin}")
+    # Get and prep db
+    db = DBSessionContext(username)
     
-    payload = dict(
-        username=username,
-        expires=int(time.time()) + WEBTOKEN_LIFETIME,
-        seed=seed,
-        is_admin=is_admin,
-    )
-    # Return token
-    token = create_jwt(payload)
-    return token
+    try:
+        # Check if user is admin
+        if is_admin is None:
+            # Create mock auth_info for standardized check
+            auth_info = {"username": username}
+            is_admin, source = check_admin_status_sync(auth_info)
+            logger.info(f"Admin status for {username} determined as {is_admin} from {source}")
+        
+        # Ensure tables exist
+        await db.__aenter__()
+        await db.ensure_table("userinfo")
+        await db.ensure_table("records")
+        await db.ensure_table("settings")
+        
+        # Get seed using the direct access method
+        db_seed = None
+        
+        # Try to get the seed
+        user_info = UserInfoKeyValue.get_by_username_and_key(username, "webtoken_seed")
+        if user_info is not None:
+            db_seed = user_info.value
+        
+        # Create new if needed
+        if reset or db_seed is None:
+            db_seed = secrets.token_urlsafe(9)
+            
+            # Create or update the seed using UserInfoKeyValue
+            user_info = UserInfoKeyValue(
+                username=username,
+                key="webtoken_seed",
+                value=db_seed,
+                mt=time.time(),
+                st=time.time()
+            )
+            UserInfoKeyValue.save(user_info)
+        
+        # Create token
+        st = time.time()
+        payload = {
+            "username": username,
+            "expires": int(st + WEBTOKEN_LIFETIME),
+            "seed": db_seed,
+            "is_admin": is_admin  # Include admin status in the token
+        }
+        token = create_jwt(payload)
+        logger.info(f"Generated token for {username} with is_admin={is_admin}")
+        
+        await db.__aexit__(None, None, None)
+        
+        return token
+        
+    except Exception as e:
+        logger.error(f"Error in get_webtoken_unsafe: {e}")
+        await db.__aexit__(type(e), e, e.__traceback__)
+        raise
 
 
-# %% The implementation
+# %% Records and settings
 
 
 async def get_updates(request, auth_info, db):
     # Parse since
-    since_str = request.querydict.get("since", "").strip()
-    if not since_str:
-        return 400, {}, "bad request: /updates needs since"
-    try:
-        since = float(since_str)
-    except ValueError:
-        return 400, {}, "bad request: /updates since needs a number (timestamp)"
-
-    # # Parse pollmethod option
-    # pollmethod = request.querydict.get("pollmethod", "").strip() or "short"
-    # if pollmethod not in ("short", "long"):
-    #     return 400, {}, "/records pollmethod must be 'short' or 'long'"
-
+    since = 0
+    if request.querydict and "since" in request.querydict:
+        try:
+            since_str = request.querydict["since"]
+            # Handle the case where since might be a questionmark or invalid value
+            if since_str and since_str != '?':
+                since = float(since_str)
+            logger.info(f"Processing updates request with since={since}")
+        except Exception as err:
+            logger.error(f"Error parsing 'since' parameter: {err}, defaulting to since=0")
+            # Continue with since=0 as a fallback
+    
+    # Get items
+    items = {"records": [], "settings": []}
+    
+    async with db:
+        # Get reset time
+        ob = await db.select_one("userinfo", "key == ?", "reset_time")
+        reset_time = float((ob or {}).get("value", -1))
+        
+        # Get records
+        records = await db.select_all("records", "st > ?", since)
+        for rec in records:
+            if rec["st"] > since:
+                items["records"].append(rec)
+        
+        # Get settings
+        settings = await db.select_all("settings", "st > ?", since)
+        for rec in settings:
+            if rec["st"] > since:
+                items["settings"].append(rec)
+    
+    # Return data
+    items["reset"] = reset_time > since
     server_time = time.time()
-
-    # Early exit - this is what will happen most of the time. Use a margin to
-    # account for limited resolution of getmtime.
-    if db.mtime + 0.2 < since:
-        return dict(
-            server_time=server_time,
-            reset=0,  # Not False; is used in the tests to know that we exited early
-            records=[],
-            settings=[],
-        )
-
-    # Get reset time from userinfo. We set userinfo.reset_time when the
-    # database is reset (or when we want to force a refresh). We make
-    # the client reset if since < reset_time.
-    ob = await db.select_one("userinfo", "key == 'reset_time'")
-    reset_time = float((ob or {}).get("value", -1))
-    reset = since <= reset_time
-
-    # Get data
-    if reset:
-        records = await db.select_all("records")
-        settings = await db.select_all("settings")
-    else:
-        query = f"st >= {float(since)}"
-        records = await db.select("records", query)
-        settings = await db.select("settings", query)
-
-    # Return result
-    result = dict(
-        server_time=server_time,
-        reset=reset,
-        records=records,
-        settings=settings,
-    )
-    return 200, {}, result
+    items["server_time"] = server_time
+    
+    # We *could* simply return items, and have our asgi server serialize
+    # it, but that would be a mess to read. Plus now we get to specify
+    # the max digits for floats, which is a plus in our case, because we
+    # have so many timestamps.
+    s = json.dumps(items, separators=(",", ":"))
+    return 200, {"Content-Type": "application/json"}, s
 
 
 async def get_records(request, auth_info, db):
     # Parse timerange option
-    timerange_str = request.querydict.get("timerange", "").strip()
-    if not timerange_str:
-        return 400, {}, "bad request: /records needs timerange (2 timestamps)"
-    timerange = timerange_str.split("-")
+    if not (request.querydict and "timerange" in request.querydict):
+        return 400, {}, "Missing timerange"
     try:
-        timerange = [float(x) for x in timerange]
-        if len(timerange) != 2:
-            raise ValueError()
-    except ValueError:
-        return 400, {}, "bad request: /records timerange needs 2 numbers (timestamps)"
-
-    # Collect records
-    tr1, tr2 = int(timerange[0]), int(timerange[1])
-    query = f"(t2 >= {tr1} AND t1 <= {tr2}) OR (t1 == t2 AND t1 <= {tr2})"
-    records = await db.select("records", query)
-
-    # Return result
-    result = dict(records=records)
-    return 200, {}, result
+        timerange_str = request.querydict["timerange"]
+        parts = timerange_str.split("-")
+        if len(parts) != 2:
+            raise ValueError("timerange must be t1-t2")
+        t1, t2 = float(parts[0]), float(parts[1])
+    except Exception as err:
+        return 400, {}, "Invalid value for timerange: " + str(err)
+    
+    # Get records
+    records = []
+    async with db:
+        for rec in await db.select_all("records"):
+            if rec["t2"] >= t1 and rec["t1"] <= t2:
+                records.append(rec)
+    
+    # Return data
+    server_time = time.time()
+    items = {"records": records, "server_time": server_time}
+    s = json.dumps(items, separators=(",", ":"))
+    return 200, {"Content-Type": "application/json"}, s
 
 
 async def put_records(request, auth_info, db):
@@ -406,11 +621,14 @@ async def put_records(request, auth_info, db):
 
 async def get_settings(request, auth_info, db):
     # Collect settings
-    settings = await db.select_all("settings")
-
-    # Return result
-    result = dict(settings=settings)
-    return 200, {}, result
+    settings = []
+    async with db:
+        async for rec in db.select_all("settings"):
+            settings.append(rec)
+    server_time = time.time()
+    items = {"settings": settings, "server_time": server_time}
+    s = json.dumps(items, separators=(",", ":"))
+    return 200, {"Content-Type": "application/json"}, s
 
 
 async def put_settings(request, auth_info, db):
@@ -434,7 +652,7 @@ async def _push_items(request, auth_info, db, what):
     errors2 = []  # error messages for items that did not even have a key
 
     async with db:
-        ob = await db.select_one("userinfo", "key == 'reset_time'")
+        ob = await db.select_one("userinfo", "key == ?", "reset_time")
         reset_time = float((ob or {}).get("value", -1))
 
         for item in items:
@@ -448,58 +666,55 @@ async def _push_items(request, auth_info, db, what):
             # This helps guarantee consistency between server and client.
             cur_item = await db.select_one(what, "key == ?", item["key"])
 
-            # Validate and copy the item (only copy fields that we know)
+            # Skip if its older
+            if (
+                cur_item is not None
+                and item.get("mt", 0) <= cur_item.get("mt", 0)
+                and not reset_time > cur_item.get("mt", 0)
+            ):
+                accepted.append(item["key"])
+                continue
+
+            # Verify that the item is valid
             try:
-                item = {
-                    key: func(item[key]) for key, func in spec.items() if key in item
-                }
-                if req.difference(item.keys()):
-                    raise ValueError(
-                        f"A {what} is missing required fields: {req.difference(item.keys())}"
-                    )
-                if item["mt"] < reset_time:
-                    raise ValueError("Item was modified after a reset")
+                new_item = {}
+                # Check that all required fields are present
+                for key in req:
+                    if key not in item:
+                        raise ValueError(
+                            f"Item misses {key} field (required: {', '.join(req)})"
+                        )
+                # Check and convert each field.
+                for key, val in item.items():
+                    if key in spec:
+                        new_item[key] = spec[key](val)
             except Exception as err:
-                # Item is corrupt - mark it as failed
                 failed.append(item["key"])
                 errors.append(str(err))
-                # Re-put the current item if there was one, otherwise ignore
-                if cur_item is not None:
-                    item = cur_item
-                else:
-                    continue
-            else:
-                accepted.append(item["key"])
+                # if cur_item is not None: await db.put(what, cur_item)  # nope
+                continue
 
-            # Reput the current item if its mt is larger than the incoming item.
-            if cur_item is not None and cur_item["mt"] > item["mt"]:
-                item = cur_item
+            # Update db
+            await db.put(what, new_item)
+            accepted.append(item["key"])
 
-            # Ensure that st is never equal, so that we can guarantee
-            # eventual consistency. It also means that the exact value
-            # of mt is less important and we can allow it to be int.
-            if cur_item is not None:
-                item["st"] = max(server_time, cur_item["st"] + 0.0001)
-            else:
-                item["st"] = server_time
-
-            # Store it!
-            await db.put(what, item)
-
-    # Return result
-    result = dict(
-        accepted=accepted,
-        failed=failed,
-        errors=errors + errors2,
-    )
-    return 200, {}, result
+    result = {
+        "accepted": accepted,
+        "failed": failed,
+        "errors": errors,
+        "errors2": errors2,
+        "server_time": server_time,
+    }
+    s = json.dumps(result, separators=(",", ":"))
+    return 200, {"Content-Type": "application/json"}, s
 
 
 async def put_forcereset(request, auth_info, db):
-    st = time.time()
-
+    """Reset the server db, forcing the client to do the same."""
     async with db:
-        await db.put_one("userinfo", key="reset_time", st=st, mt=st, value=st)
-
-    result = dict(status="ok")
-    return 200, {}, result
+        server_time = time.time()
+        await db.put(
+            "userinfo",
+            {"key": "reset_time", "value": server_time, "mt": int(server_time)},
+        )
+    return 200, {}, f"Reset at {int(server_time)}"

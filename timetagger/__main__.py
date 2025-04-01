@@ -55,6 +55,9 @@ from timetagger.multiuser import api
 from timetagger.multiuser.auth_utils import check_admin_status_sync
 from timetagger.server.config_api import get_full_app_config, update_app_config
 
+# Import default_template and md2html from the server module
+from timetagger.server._assets import default_template, md2html
+
 # Special hooks exit early
 if __name__ == "__main__" and len(sys.argv) >= 2:
     if sys.argv[1] in ("--version", "version"):
@@ -435,10 +438,32 @@ async def api_handler(request, path):
         if config.proxy_auth_enabled:
             await validate_auth(request, auth_info)
     except AuthException as err:
-        print(f"Authentication error: {err}")
         logger.error(f"Authentication error: {err}")
         return 401, {}, f"unauthorized: {err}"
 
+    # Extract query parameters from the URL and make them available
+    # This ensures query parameters are properly passed to the API handlers
+    if '?' in request.path:
+        base_path, query_string = request.path.split('?', 1)
+        # Store original path and querydict
+        original_path = request.path
+        original_querydict = request.querydict
+        
+        # Create query dict if it doesn't exist
+        if not hasattr(request, 'querydict'):
+            request.querydict = {}
+        
+        # Parse query parameters
+        for param in query_string.split('&'):
+            if '=' in param:
+                key, value = param.split('=', 1)
+                request.querydict[key] = value
+            else:
+                request.querydict[param] = ''
+        
+        # Log the parsed query parameters
+        logger.info(f"Parsed query parameters: {request.querydict}")
+    
     # Handle endpoints that require authentication
     return await api_handler_triage(request, path, auth_info, db)
 
@@ -457,6 +482,8 @@ async def api_handler_triage(request, path, auth_info, db):
         path = path[4:]
     if path.startswith('v2/'):
         path = path[3:]
+    
+    logger.info(f"API triage for path: {path}")
     
     # Dispatch to appropriate handler
     if path == 'login':
@@ -518,9 +545,11 @@ async def api_handler_triage(request, path, auth_info, db):
         subpath = path[5:]
         return await timetagger.server._apiserver.data_api_handler(request, subpath, auth_info, db)
     else:
-        # Try to use the default handler if provided
+        # Forward to the API server module for standard endpoints
         try:
-            return await timetagger.server._apiserver.api_handler_triage(request, path, auth_info, db)
+            from timetagger.server._apiserver import api_handler_triage as _apiserver_triage
+            logger.info(f"Forwarding to _apiserver.api_handler_triage for path: {path}")
+            return await _apiserver_triage(request, path, auth_info, db)
         except Exception as e:
             logger.error(f"Error in API handler: {str(e)}")
             return 404, {}, {'error': f'API endpoint not found: {path}'}
@@ -572,7 +601,7 @@ async def get_webtoken_azure(request, auth_info):
     See `get_webtoken_unsafe()` for details.
     """
     logger.info("Starting get_webtoken_azure")
-    print(f"[get_webtoken_azure] Received auth_info: {auth_info}")
+    logger.debug(f"[get_webtoken_azure] Received auth_info: {auth_info}")
     
     # Check if we have a username and access token (from client-side token exchange)
     username = auth_info.get("username", "").strip()
@@ -581,7 +610,6 @@ async def get_webtoken_azure(request, auth_info):
     
     if username and access_token:
         logger.info(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
-        print(f"[get_webtoken_azure] Using provided username from Azure AD: {username}")
         
         # Validate the ID token if provided
         if id_token:
@@ -1196,22 +1224,19 @@ TRUSTED_PROXIES = load_trusted_proxies()
 async def token_exchange_handler(request):
     """Handle exchanging an authorization code for tokens with Azure AD."""
     try:
-        print("========== TOKEN EXCHANGE HANDLER CALLED ==========")
+        logger.info("========== TOKEN EXCHANGE HANDLER CALLED ==========")
         logger.info("Token exchange handler called")
         
         # Get request body
         body_str = await request.get_body()
-        print(f"Request body: {body_str}")
         logger.info(f"Request body: {body_str}")
         
         body = json.loads(body_str)
-        print(f"Parsed body: {body}")
         logger.info(f"Parsed body: {body}")
         
         code = body.get("code")
         if not code:
             logger.error("No authorization code provided in request")
-            print("ERROR: No authorization code provided in request")
             return 400, {}, "Bad request: No authorization code provided"
         
         logger.info(f"Exchanging authorization code (first 10 chars): {code[:10]}...")
@@ -1270,16 +1295,12 @@ async def token_exchange_handler(request):
             "scope": final_scope # Use the corrected scope
         }
         
-        print(f"Token URL: {token_url}")
-        print(f"Final Token request scope: {final_scope}") # Log the final scope
-        print(f"Token request data: {token_data}")
         logger.info(f"Token URL: {token_url}")
         logger.info(f"Final Token request scope: {final_scope}") # Log the final scope
         logger.info(f"Token request data: {token_data}")
         
         # Make the token request
         try:
-            print("Making token request...")
             async with httpx.AsyncClient() as client:
                 # Using httpx to handle form encoding properly
                 response = await client.post(
@@ -1287,29 +1308,19 @@ async def token_exchange_handler(request):
                     data=token_data,  # httpx will properly format this as application/x-www-form-urlencoded
                     headers={"Content-Type": "application/x-www-form-urlencoded"}
                 )
-                print(f"Token response status: {response.status_code}")
-                print(f"Token response content: {response.text}")
-                logger.info(f"Token response status: {response.status_code}")
-                logger.info(f"Token response content: {response.text[:200]}")
-                
                 response.raise_for_status()
                 tokens = response.json()
                 logger.info("Successfully received tokens from Azure AD")
                 
                 # Return tokens to the client
-                print("Returning tokens to client")
                 return 200, {"content-type": "application/json"}, tokens
         except Exception as e:
-            print(f"Azure AD token exchange failed: {str(e)}")
             logger.error(f"Azure AD token exchange failed: {str(e)}")
             if hasattr(e, 'response'):
-                print(f"Response status: {e.response.status_code}")
-                print(f"Response body: {e.response.text}")
                 logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response body: {e.response.text}")
             return 500, {"content-type": "application/json"}, {"error": f"Azure AD token exchange failed: {str(e)}"}
     except Exception as e:
-        print(f"Error in token_exchange_handler: {str(e)}")
         logger.error(f"Error in token_exchange_handler: {str(e)}")
         return 500, {"content-type": "application/json"}, {"error": f"Internal server error: {str(e)}"}
 
@@ -1330,6 +1341,26 @@ async def pages_handler(request, path, template_context):
     except Exception as e:
         logger.error(f"Error rendering template: {e}")
         return 500, {}, f"Error rendering template: {e}"
+
+
+# Define the get_username_from_proxy function
+async def get_username_from_proxy(request):
+    """Extract username from a proxy header."""
+    if not config.proxy_auth_enabled:
+        return None
+    
+    header_name = config.proxy_auth_header
+    if not header_name:
+        return None
+    
+    # Get the header value
+    username = request.headers.get(header_name, "")
+    if not username:
+        logger.warning(f"Proxy auth header '{header_name}' is empty")
+        return None
+    
+    logger.info(f"Extracted username '{username}' from proxy header '{header_name}'")
+    return username.strip()
 
 
 if __name__ == "__main__":

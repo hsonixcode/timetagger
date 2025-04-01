@@ -1,0 +1,52 @@
+name: Code Quality
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          
+      - name: Run code quality checks
+        shell: bash
+        run: |
+          # Run our custom linting tool
+          python scripts/lint_code.py
+          
+      - name: Check for bare except blocks
+        shell: bash
+        run: |
+          # Check for bare except blocks - fail the build if any are found
+          ! grep -r "except:" --include="*.py" . | grep -v "except (.*) as"
+          
+      - name: Check for print statements
+        shell: bash
+        run: |
+          # Report print statements (but don't fail the build)
+          grep -r "print(" --include="*.py" . || true
+          
+      - name: Count TODO and FIXME comments
+        shell: bash
+        run: |
+          # Count and report TODOs and FIXMEs
+          echo "TODO comments:"
+          grep -r "# TODO" --include="*.py" . | wc -l
+          echo "FIXME comments:"
+          grep -r "# FIXME" --include="*.py" . | wc -l 
