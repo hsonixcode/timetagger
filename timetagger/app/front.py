@@ -938,7 +938,7 @@ class TopWidget(Widget):
         self._picker = utils.Picker()
         self._button_pressed = None
         self._current_scale = {}
-        self._sync_feedback_xy = 0, 0, 0
+        self._sync_feedback_xy = [0, 0, 0]  # Use array instead of tuple
 
         # Periodically draw the sync feedback icon. Make sure to do it via requestAnimationFrame
         window.setInterval(
@@ -1208,7 +1208,7 @@ class TopWidget(Widget):
         return d + dx + 2 * sync_radius + 4
 
     def _draw_sync_feedback(self, ctx, x1, y1, radius):
-        self._sync_feedback_xy = x1, y1, radius
+        self._sync_feedback_xy = [x1, y1, radius]  # Use array instead of tuple
         return self._draw_sync_feedback_work(ctx)
 
     def _draw_sync_feedback_callback(self):
@@ -1597,6 +1597,11 @@ class TopWidget(Widget):
             window.location.href = "/timetagger/configure_external_auth"
         elif action == "users_page":
             window.location.href = "/timetagger/users"
+        elif action == "dosync":
+            console.log("[TopWidget] Manual sync triggered")
+            # Trigger immediate sync with 0 delay
+            window.store.sync_soon(0)
+            self.update()
 
     def _logout(self):
         ok = window.confirm("Are you sure you want to log out?")
