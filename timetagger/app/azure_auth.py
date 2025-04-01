@@ -12,10 +12,26 @@ class AzureAuth:
         self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
         self.scope = "openid profile email https://graph.microsoft.com/User.Read"
         
+        # Add polyfill for window.crypto.randomUUID if not available
+        if not hasattr(window.crypto, 'randomUUID'):
+            # Define the polyfill as JavaScript code to be executed directly
+            polyfill_code = """
+            window.crypto.randomUUID = function() {
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                    var r = Math.random() * 16 | 0;
+                    var v = c === 'x' ? r : (r & 0x3 | 0x8);
+                    return v.toString(16);
+                });
+            };
+            """
+            # Execute the JavaScript code directly
+            window.eval(polyfill_code)
+            console.log('Added polyfill for window.crypto.randomUUID in AzureAuth')
+        
     async def login(self):
         """Initiate Azure AD login flow."""
         try:
-            # Generate state for CSRF protection
+            # Generate state for CSRF protection using the polyfilled function
             state = window.crypto.randomUUID()
             localStorage.setItem("azure_auth_state", state)
             

@@ -21,6 +21,19 @@
 </div>
 
 <script>
+// Add polyfill for window.crypto.randomUUID if not available
+if (!window.crypto.randomUUID) {
+    window.crypto.randomUUID = function() {
+        // Create a UUID v4 implementation
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    };
+    console.log('Added polyfill for window.crypto.randomUUID');
+}
+
 // Add to immediately check for Azure config
 (async function checkAzureConfig() {
     console.log("Immediately checking Azure AD configuration...");
@@ -98,7 +111,7 @@ class AzureAuthHandler {
             const originalPage = document.referrer || '/timetagger/app/';
             localStorage.setItem("azure_original_page", originalPage);
             
-            // Generate state for CSRF protection
+            // Generate state for CSRF protection (with polyfill support)
             const state = window.crypto.randomUUID();
             localStorage.setItem("azure_auth_state", state);
             
