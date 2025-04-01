@@ -19,7 +19,7 @@ services:
 
   timetagger:
     build:
-      context: https://github.com/hsonixcode/timetagger.git#main
+      context: .
       dockerfile: Dockerfile
     ports:
       - "8000:8000"

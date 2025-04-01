@@ -265,6 +265,10 @@ class DBSessionContext:
 async def api_handler_triage(request, path, auth_info, db):
     """The API handler that triages over the API options."""
 
+    # Handle versioned API paths
+    if path.startswith('v2/'):
+        path = path[3:]  # Remove 'v2/' prefix
+
     if path == "updates":
         if request.method == "GET":
             return await get_updates(request, auth_info, db)
