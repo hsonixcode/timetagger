@@ -1567,6 +1567,12 @@ class TopWidget(Widget):
 
         self.run_updating_timer = False
 
+        # Handle navigation and record actions
+        if (action.startswith("nav_") or action.startswith("record_")):
+            self._handle_navigation_or_record_action(action)
+            return
+
+        # Handle other actions
         if action == "menu":
             self._canvas.menu_dialog.open()
         elif action == "login":
@@ -1606,6 +1612,83 @@ class TopWidget(Widget):
 
     def _export(self):
         self._canvas.export_dialog.open()
+
+    def _handle_navigation_or_record_action(self, action):
+        """Handle navigation and record actions"""
+        try:
+            console.log("[TopWidget] Handle navigation/record action:", action)
+            
+            if action.startswith("nav_zoom_"):
+                scale = action[len("nav_zoom_"):]
+                console.log("[TopWidget] Zoom with scale:", scale)
+                
+                # Special cases for zooming in/out by 1 level
+                if scale == "+1" or scale == "-1":
+                    self._canvas.range.get_snap_range(int(scale))
+                    return
+                
+                # Get current range and determine center point
+                t1, t2 = self._canvas.range.get_range()
+                center = (t1 + t2) / 2
+                
+                # Calculate new range based on scale
+                try:
+                    if scale in ["1h", "3h", "6h", "12h", "1D", "1W", "1M", "3M", "1Y"]:
+                        half_scale = dt.add(0, scale) / 2
+                        new_t1 = center - half_scale
+                        new_t2 = center + half_scale
+                        self._canvas.range.animate_range(new_t1, new_t2)
+                    else:
+                        console.warn("[TopWidget] Scale not found:", scale)
+                except Exception as e:
+                    console.error("[TopWidget] Error calculating range for scale:", scale, e)
+                
+            elif action == "nav_backward":
+                t1, t2 = self._canvas.range.get_range()
+                nsecs = t2 - t1
+                self._canvas.range.animate_range(t1 - nsecs, t1)
+                
+            elif action == "nav_forward":
+                t1, t2 = self._canvas.range.get_range()
+                nsecs = t2 - t1
+                self._canvas.range.animate_range(t2, t2 + nsecs)
+                
+            elif action == "nav_menu":
+                if hasattr(self._canvas, 'timeselection_dialog') and self._canvas.timeselection_dialog:
+                    self._canvas.timeselection_dialog.open()
+                else:
+                    console.error("[TopWidget] timeselection_dialog not initialized")
+                    
+            elif action == "nav_snap_today":
+                t1, t2 = self._canvas.range.get_today_range()
+                self._canvas.range.animate_range(t1, t2)
+                
+            elif action.startswith("nav_snap_now"):
+                # Extract the scale from the action
+                scale = action[len("nav_snap_now"):]
+                console.log("[TopWidget] Snap to now with scale:", scale)
+                
+                now = self._canvas.now()
+                t1 = dt.floor(now, scale)
+                t2 = dt.add(t1, scale)
+                
+                self._canvas.range.animate_range(t1, t2)
+                
+            elif action.startswith("record_start"):
+                now = self._canvas.now()
+                record = window.store.records.create(now, now)
+                if hasattr(self._canvas, 'record_dialog') and self._canvas.record_dialog:
+                    self._canvas.record_dialog.open("Start", record, self.update)
+                else:
+                    console.error("[TopWidget] record_dialog not initialized")
+                    
+            elif action == "record_stopall":
+                window.store.records.stop_running_records(self._canvas.now())
+                
+            else:
+                console.warn("[TopWidget] Unhandled navigation/record action:", action)
+        except Exception as e:
+            console.error("[TopWidget] Error handling navigation/record action:", e)
 
 
 class RecordsWidget(Widget):
