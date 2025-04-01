@@ -29,7 +29,6 @@ from importlib import resources
 import jinja2
 import time
 
-import bcrypt
 import asgineer
 import itemdb
 import pscript
@@ -1145,7 +1144,7 @@ async def get_webtoken_proxy(request, auth_info):
 
 async def get_webtoken_usernamepassword(request, auth_info):
     """An authentication handler that provides a webtoken when the
-    user provides the correct username and password hash as listed in
+    user provides the correct username and password as listed in
     the server config (`config.credentials`). See `get_webtoken_unsafe()` for details.
     """
     logger.info("Starting get_webtoken_usernamepassword")
@@ -1155,14 +1154,13 @@ async def get_webtoken_usernamepassword(request, auth_info):
     if not (username and password):
         logger.warning("Username or password missing in request")
         return 400, {}, "bad request: username or password missing"
-    # Get hash from config
-    hash = CREDENTIALS.get(username, "")
-    if not hash:
+    # Get stored password from config
+    stored_password = CREDENTIALS.get(username, "")
+    if not stored_password:
         logger.warning(f"Username '{username}' not found in credentials")
         return 403, {}, "forbidden: invalid credentials"
-    # Check the hash!
-    # Note that bcrypt handles the salt internally.
-    if not bcrypt.checkpw(password.encode(), hash.encode()):
+    # Check the password (plain text comparison)
+    if password != stored_password:
         logger.warning(f"Password check failed for user '{username}'")
         return 403, {}, "forbidden: invalid credentials"
     
